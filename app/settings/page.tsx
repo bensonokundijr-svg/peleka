@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { db, storage } from "@/lib/firebase";
-import { ref as dbRef, onValue, update } from "firebase/database";
+import { ref as dbRef, get, update } from "firebase/database";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useAuth } from "@/lib/auth-context";
 
@@ -49,15 +49,17 @@ export default function SettingsPage() {
   // Load profile
   useEffect(() => {
     if (!user) return;
-    return onValue(dbRef(db, `businesses/${user.uid}/profile`), (snap) => {
-      const data = snap.val();
-      if (data) {
-        setBusinessName(data.businessName ?? "");
-        setPhone(data.phone ?? "");
-        setLogoUrl(data.logoUrl ?? "");
-      }
-      setLoadingProfile(false);
-    });
+    get(dbRef(db, `businesses/${user.uid}/profile`))
+      .then((snap) => {
+        const data = snap.val();
+        if (data) {
+          setBusinessName(data.businessName ?? "");
+          setPhone(data.phone ?? "");
+          setLogoUrl(data.logoUrl ?? "");
+        }
+        setLoadingProfile(false);
+      })
+      .catch(() => setLoadingProfile(false));
   }, [user]);
 
   function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -74,7 +76,6 @@ export default function SettingsPage() {
     setError(null);
     setSuccess(false);
 
-    // Step 1: attempt logo upload independently — never blocks the profile save
     let finalLogoUrl = logoUrl;
     let logoWarning: string | null = null;
     if (logoFile) {
@@ -88,7 +89,6 @@ export default function SettingsPage() {
       }
     }
 
-    // Step 2: save profile to Realtime Database (always runs, even if logo failed)
     try {
       await update(dbRef(db, `businesses/${user.uid}/profile`), {
         businessName: businessName.trim(),
@@ -96,17 +96,18 @@ export default function SettingsPage() {
         ...(finalLogoUrl ? { logoUrl: finalLogoUrl } : {}),
       });
 
+      setBusinessName(businessName.trim());
+      setPhone(phone.trim());
       setLogoUrl(finalLogoUrl);
       setLogoFile(null);
+      setLogoPreview(null);
+      setSaving(false);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 4000);
 
-      if (logoWarning) {
-        setError(logoWarning);
-      }
+      if (logoWarning) setError(logoWarning);
     } catch (err) {
       setError(dbErrorMessage(err));
-    } finally {
       setSaving(false);
     }
   }

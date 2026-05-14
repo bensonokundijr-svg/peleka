@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import mapboxgl from "mapbox-gl";
 import { db } from "@/lib/firebase";
-import { ref, onValue, get } from "firebase/database";
+import { ref, onValue } from "firebase/database";
 import type { Delivery, DeliveryStatus } from "@/lib/types";
 
 // ─── Status step definitions ──────────────────────────────────────────────────
@@ -346,19 +346,25 @@ export default function TrackPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // One-time lookup to find which business owns this delivery
+  // Single direct subscription — deliveries-public is flat, public, and
+  // kept in sync by the dashboard (create/assign/dispatch) and rider page (status).
+  // Using onValue instead of get() means Firebase SDK handles reconnects
+  // automatically, which is why this is reliable on slow mobile connections.
   useEffect(() => {
     if (!id) return;
-    get(ref(db, `delivery-index/${id}`))
-      .then((snap) => {
-        const uid = snap.val() as string | null;
-        if (!uid) setDelivery("not_found");
-        else setOwnerUid(uid);
-      })
-      .catch(() => setDelivery("timed_out"));
+    return onValue(ref(db, `deliveries-public/${id}`), (snap) => {
+      const data = snap.val() as (Omit<Delivery, "id"> & { ownerUid: string }) | null;
+      if (!data) {
+        setDelivery("not_found");
+      } else {
+        const { ownerUid: uid, ...rest } = data;
+        setOwnerUid(uid);
+        setDelivery({ id, ...rest } as Delivery);
+      }
+    });
   }, [id]);
 
-  // Load business profile once uid is known
+  // Load business profile for the call button once ownerUid is known
   useEffect(() => {
     if (!ownerUid) return;
     return onValue(ref(db, `businesses/${ownerUid}/profile`), (snap) => {
@@ -367,20 +373,6 @@ export default function TrackPage() {
       setBusinessPhone(data?.phone ?? "");
     });
   }, [ownerUid]);
-
-  // Subscribe to the delivery once we know the owner uid
-  useEffect(() => {
-    if (!ownerUid || !id) return;
-    const unsub = onValue(ref(db, `deliveries/${ownerUid}/${id}`), (snap) => {
-      const data = snap.val();
-      if (!data) {
-        setDelivery("not_found");
-      } else {
-        setDelivery({ id, ...data } as Delivery);
-      }
-    });
-    return unsub;
-  }, [id, ownerUid]);
 
   // Loading
   if (delivery === null) {

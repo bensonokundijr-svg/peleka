@@ -48,6 +48,16 @@
         ".read": true,
         ".write": "auth != null"
       }
+    },
+
+    "deliveries-public": {
+      "$deliveryId": {
+        ".read": true,
+        ".write": "auth != null",
+        "status": {
+          ".write": true
+        }
+      }
     }
   }
 }

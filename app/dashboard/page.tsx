@@ -184,6 +184,12 @@ function DeliveryCard({ delivery, businessName }: { delivery: Delivery; business
       riderName:  rider.name,
       riderPhone: rider.phone,
     });
+    await update(ref(db, `deliveries-public/${delivery.id}`), {
+      status:    "assigned",
+      riderId:   rider.id,
+      riderName: rider.name,
+      riderPhone: rider.phone,
+    });
     setShowAssign(false);
 
     // Notify the rider via SMS — fire and forget, failure is silent
@@ -208,6 +214,7 @@ function DeliveryCard({ delivery, businessName }: { delivery: Delivery; business
     setDispatching(true);
     try {
       await update(ref(db, `deliveries/${uid}/${delivery.id}`), { status: "dispatched" });
+      await update(ref(db, `deliveries-public/${delivery.id}`), { status: "dispatched" });
 
       // Write public rider-active record so the (unauthenticated) rider page can find this delivery
       if (delivery.riderId) {
@@ -597,6 +604,14 @@ function CreateForm() {
       });
       if (newRef.key) {
         await set(ref(db, `delivery-index/${newRef.key}`), uid);
+        await set(ref(db, `deliveries-public/${newRef.key}`), {
+          ownerUid:        uid,
+          status:          "unassigned",
+          customerName:    fields.customerName.trim(),
+          deliveryAddress: fields.deliveryAddress.trim(),
+          notes:           fields.notes.trim() || "",
+          ...(addressCoords ?? {}),
+        });
       }
       setFields(EMPTY);
       setAddressCoords(null);

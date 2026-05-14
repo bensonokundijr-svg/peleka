@@ -224,6 +224,7 @@ export default function RiderTrackingPage() {
     try {
       await Promise.all([
         update(ref(db, `deliveries/${activeDelivery.ownerUid}/${activeDelivery.id}`), { status: action }),
+        set(ref(db, `deliveries-public/${activeDelivery.id}/status`), action),
         remove(ref(db, `rider-active/${id}`)),
       ]);
     } catch (err) {
