@@ -41,6 +41,13 @@
           ".write": true
         }
       }
+    },
+
+    "rider-active": {
+      "$riderId": {
+        ".read": true,
+        ".write": "auth != null"
+      }
     }
   }
 }

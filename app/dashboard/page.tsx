@@ -194,6 +194,20 @@ function DeliveryCard({ delivery, businessName }: { delivery: Delivery; business
     try {
       await update(ref(db, `deliveries/${uid}/${delivery.id}`), { status: "dispatched" });
 
+      // Write public rider-active record so the (unauthenticated) rider page can find this delivery
+      if (delivery.riderId) {
+        await set(ref(db, `rider-active/${delivery.riderId}`), {
+          deliveryId: delivery.id,
+          ownerUid: uid,
+          customerName: delivery.customerName,
+          customerPhone: delivery.customerPhone,
+          deliveryAddress: delivery.deliveryAddress,
+          notes: delivery.notes || "",
+          ...(delivery.lat != null ? { lat: delivery.lat } : {}),
+          ...(delivery.lng != null ? { lng: delivery.lng } : {}),
+        });
+      }
+
       try {
         const res = await fetch("/api/send-sms", {
           method: "POST",

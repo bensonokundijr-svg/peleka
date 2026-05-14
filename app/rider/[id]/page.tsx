@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { db } from "@/lib/firebase";
-import { ref, set, update, remove, get, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { ref, set, update, remove, get, onValue } from "firebase/database";
 import mapboxgl from "mapbox-gl";
 
 type DeliveryWatchStatus = "checking" | "dispatched" | "waiting" | "completed";
@@ -12,7 +12,9 @@ type ActionResult = "delivered" | "failed" | null;
 
 interface ActiveDelivery {
   id: string;
+  ownerUid: string;
   customerName: string;
+  customerPhone: string;
   deliveryAddress: string;
   notes: string;
   lat?: number;
@@ -125,33 +127,36 @@ export default function RiderTrackingPage() {
     });
   }, [id, ownerUid]);
 
-  // ── Watch for an active dispatched delivery ──────────────────────────────────
+  // ── Watch rider-active for the current dispatched delivery ──────────────────
+  // This node is publicly readable (no auth needed) and is written by the
+  // dashboard on dispatch, cleared when the rider marks delivered/failed.
   useEffect(() => {
-    if (!id || !ownerUid) return;
-    const q = query(ref(db, `deliveries/${ownerUid}`), orderByChild("riderId"), equalTo(id));
-    return onValue(q, (snap) => {
-      const data = snap.val() as Record<string, {
-        status: string;
+    if (!id) return;
+    return onValue(ref(db, `rider-active/${id}`), (snap) => {
+      const data = snap.val() as {
+        deliveryId: string;
+        ownerUid: string;
         customerName?: string;
+        customerPhone?: string;
         deliveryAddress?: string;
         notes?: string;
         lat?: number;
         lng?: number;
-      }> | null;
+      } | null;
 
-      const entries = data ? Object.entries(data) : [];
-      const dispatched = entries.find(([, d]) => d.status === "dispatched");
-
-      if (dispatched) {
-        const [deliveryId, d] = dispatched;
+      if (data) {
         wasDispatchedRef.current = true;
+        // Also update ownerUid state so rider-name subscription refreshes if needed
+        setOwnerUid(data.ownerUid);
         setActiveDelivery({
-          id: deliveryId,
-          customerName: d.customerName ?? "Customer",
-          deliveryAddress: d.deliveryAddress ?? "",
-          notes: d.notes ?? "",
-          lat: d.lat,
-          lng: d.lng,
+          id: data.deliveryId,
+          ownerUid: data.ownerUid,
+          customerName: data.customerName ?? "Customer",
+          customerPhone: data.customerPhone ?? "",
+          deliveryAddress: data.deliveryAddress ?? "",
+          notes: data.notes ?? "",
+          lat: data.lat,
+          lng: data.lng,
         });
         setDeliveryStatus("dispatched");
       } else if (wasDispatchedRef.current) {
@@ -214,10 +219,13 @@ export default function RiderTrackingPage() {
 
   // ── Action handler ───────────────────────────────────────────────────────────
   async function handleAction(action: "delivered" | "failed") {
-    if (!activeDelivery || !ownerUid) return;
+    if (!activeDelivery) return;
     setActionResult(action); // show confirmation immediately
     try {
-      await update(ref(db, `deliveries/${ownerUid}/${activeDelivery.id}`), { status: action });
+      await Promise.all([
+        update(ref(db, `deliveries/${activeDelivery.ownerUid}/${activeDelivery.id}`), { status: action }),
+        remove(ref(db, `rider-active/${id}`)),
+      ]);
     } catch (err) {
       console.error("Failed to update delivery:", err);
     }
@@ -375,6 +383,19 @@ export default function RiderTrackingPage() {
             </svg>
             Navigate with Google Maps
           </a>
+
+          {/* Call customer button */}
+          {activeDelivery.customerPhone && (
+            <a
+              href={`tel:${activeDelivery.customerPhone}`}
+              className="flex items-center justify-center gap-2.5 w-full py-4 rounded-xl bg-gray-800 hover:bg-gray-700 active:bg-gray-900 text-white font-bold text-lg transition-colors"
+            >
+              <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
+              </svg>
+              Call {activeDelivery.customerName.split(" ")[0]}
+            </a>
+          )}
 
           {/* Action buttons */}
           <div className="grid grid-cols-2 gap-3">
