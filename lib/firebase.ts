@@ -2,11 +2,11 @@ import { initializeApp, getApps } from "firebase/app";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDVD44IVcLfsKucAvI2dRwkiUxW085TqIE",
-  authDomain: "pelaka-eed7a.firebaseapp.com",
-  databaseURL: "https://pelaka-eed7a-default-rtdb.firebaseio.com",
-  projectId: "pelaka-eed7a",
-  appId: "1:565111419691:web:5a9cc7f05e85e126e30b6e",
+  apiKey:      process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain:  process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
+  projectId:   process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  appId:       process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
