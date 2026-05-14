@@ -334,18 +334,28 @@ export default function TrackPage() {
   const id = params.id as string;
 
   const [ownerUid, setOwnerUid] = useState<string | null>(null);
-  const [delivery, setDelivery] = useState<Delivery | null | "not_found">(null);
+  const [delivery, setDelivery] = useState<Delivery | null | "not_found" | "timed_out">(null);
   const [businessName, setBusinessName] = useState("");
   const [businessPhone, setBusinessPhone] = useState("");
+
+  // Show an error after 10 s if the delivery still hasn't loaded
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDelivery((prev) => (prev === null ? "timed_out" : prev));
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // One-time lookup to find which business owns this delivery
   useEffect(() => {
     if (!id) return;
-    get(ref(db, `delivery-index/${id}`)).then((snap) => {
-      const uid = snap.val() as string | null;
-      if (!uid) setDelivery("not_found");
-      else setOwnerUid(uid);
-    });
+    get(ref(db, `delivery-index/${id}`))
+      .then((snap) => {
+        const uid = snap.val() as string | null;
+        if (!uid) setDelivery("not_found");
+        else setOwnerUid(uid);
+      })
+      .catch(() => setDelivery("timed_out"));
   }, [id]);
 
   // Load business profile once uid is known
@@ -377,6 +387,27 @@ export default function TrackPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  // Timed out
+  if (delivery === "timed_out") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-5 gap-4">
+        <svg className="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+        </svg>
+        <div className="text-center">
+          <p className="text-base font-semibold text-gray-900">Unable to load delivery</p>
+          <p className="text-sm text-gray-500 mt-1">Please try again.</p>
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }

@@ -159,6 +159,7 @@ function DeliveryCard({ delivery, businessName }: { delivery: Delivery; business
   const [dispatching, setDispatching] = useState(false);
   const [copied, setCopied] = useState(false);
   const [smsState, setSmsState] = useState<"idle" | "sent" | "failed">("idle");
+  const [riderNotified, setRiderNotified] = useState(false);
 
   async function handleCopyLink() {
     const url = `${window.location.origin}/track/${delivery.id}`;
@@ -184,6 +185,20 @@ function DeliveryCard({ delivery, businessName }: { delivery: Delivery; business
       riderPhone: rider.phone,
     });
     setShowAssign(false);
+
+    // Notify the rider via SMS — fire and forget, failure is silent
+    const riderLink = `${window.location.origin}/rider/${rider.id}`;
+    const name = businessName || "Peleka";
+    fetch("/api/send-sms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: rider.phone,
+        message: `Hi ${rider.name}, you have a new delivery from ${name}. Open your route here: ${riderLink}`,
+      }),
+    })
+      .then((res) => { if (res.ok) setRiderNotified(true); })
+      .catch(() => {});
   }
 
   const trackingUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/track/${delivery.id}`;
@@ -250,13 +265,23 @@ function DeliveryCard({ delivery, businessName }: { delivery: Delivery; business
 
         {/* Rider row — visible when assigned or beyond */}
         {delivery.riderName && (
-          <div className="flex items-center gap-2 text-sm text-gray-700">
-            <svg className="w-4 h-4 shrink-0 text-gray-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-            </svg>
-            <span className="font-medium">{delivery.riderName}</span>
-            <span className="text-gray-400">·</span>
-            <span className="text-gray-500">{delivery.riderPhone}</span>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2 text-sm text-gray-700">
+              <svg className="w-4 h-4 shrink-0 text-gray-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+              </svg>
+              <span className="font-medium">{delivery.riderName}</span>
+              <span className="text-gray-400">·</span>
+              <span className="text-gray-500">{delivery.riderPhone}</span>
+            </div>
+            {riderNotified && (
+              <div className="flex items-center gap-1 ml-6 text-xs text-green-600">
+                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
+                Rider notified
+              </div>
+            )}
           </div>
         )}
 

@@ -34,17 +34,21 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null);
 
-  if (!body?.to || !body?.trackingUrl) {
-    console.log("[send-sms] Bad request — missing to or trackingUrl. Body:", body);
+  if (!body?.to || (!body?.trackingUrl && !body?.message)) {
+    console.log("[send-sms] Bad request — missing to or (trackingUrl / message). Body:", body);
     return NextResponse.json(
-      { error: "Missing required fields: to, trackingUrl" },
+      { error: "Missing required fields: to, and either trackingUrl or message" },
       { status: 400 }
     );
   }
 
   const to = normalizePhone(String(body.to));
-  const name = (body.businessName as string | undefined)?.trim() || "Peleka";
-  const message = `Your order from ${name} is on the way! Track your delivery here: ${body.trackingUrl}`;
+  const message: string = body.message
+    ? String(body.message)
+    : (() => {
+        const name = (body.businessName as string | undefined)?.trim() || "Peleka";
+        return `Your order from ${name} is on the way! Track your delivery here: ${body.trackingUrl}`;
+      })();
 
   // ── Request details ─────────────────────────────────────────────────────────
   console.log("[send-sms] Sending to:", to);
