@@ -135,7 +135,7 @@ function InfoCard({ delivery }: { delivery: Delivery }) {
         </div>
         <div>
           <p className="font-semibold text-gray-900 text-sm">{statusMessages[delivery.status]}</p>
-          <p className="text-xs text-gray-500 mt-0.5">Hi {delivery.customerName.split(" ")[0]}, here's your delivery update.</p>
+          <p className="text-xs text-gray-500 mt-0.5">Hi {delivery.customerName.split(" ")[0]}, here&apos;s your delivery update.</p>
         </div>
       </div>
 
