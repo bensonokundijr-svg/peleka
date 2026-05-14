@@ -328,17 +328,205 @@ function DeliveryCard({ delivery }: { delivery: Delivery }) {
   );
 }
 
+// ─── Shared input style ───────────────────────────────────────────────────────
+
+const INPUT_CLASS =
+  "border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 " +
+  "placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
+
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactElement<{ className?: string }>;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
+      {label}
+      {required && <span className="sr-only"> (required)</span>}
+      {React.cloneElement(children, {
+        className: `${INPUT_CLASS} ${children.props.className ?? ""}`.trim(),
+      })}
+    </label>
+  );
+}
+
+// ─── Address autocomplete ─────────────────────────────────────────────────────
+
+interface Suggestion {
+  placeId: string;
+  name: string;
+  placeName: string; // full address shown in the input after selection
+}
+
+function AddressAutocomplete({
+  value,
+  onChange,
+  onSelect,
+}: {
+  value: string;
+  onChange: (text: string) => void;
+  onSelect: (address: string, lat: number, lng: number) => void;
+}) {
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [open, setOpen] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  function handleInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const text = e.target.value;
+    onChange(text);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (text.length < 3) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      console.log("[autocomplete] fetching suggestions for:", text);
+      try {
+        const res = await fetch("/api/places-autocomplete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input: text }),
+        });
+        console.log("[autocomplete] route status:", res.status);
+        if (!res.ok) {
+          const err = await res.text();
+          console.error("[autocomplete] route error:", err);
+          return;
+        }
+        const data = await res.json() as {
+          suggestions?: Array<{
+            placePrediction: {
+              placeId: string;
+              text: { text: string };
+              structuredFormat: {
+                mainText: { text: string };
+                secondaryText?: { text: string };
+              };
+            };
+          }>;
+        };
+        console.log("[autocomplete] suggestions count:", data.suggestions?.length ?? 0);
+        const items = (data.suggestions ?? []).map((s) => ({
+          placeId: s.placePrediction.placeId,
+          name: s.placePrediction.structuredFormat.mainText.text,
+          placeName: s.placePrediction.text.text,
+        }));
+        setSuggestions(items);
+        setOpen(items.length > 0);
+      } catch (err) {
+        console.error("[autocomplete] fetch threw:", err);
+      }
+    }, 300);
+  }
+
+  async function handleSelect(s: Suggestion) {
+    onChange(s.placeName);
+    setSuggestions([]);
+    setOpen(false);
+    try {
+      const res = await fetch("/api/places-details", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ placeId: s.placeId }),
+      });
+      if (!res.ok) return;
+      const data = await res.json() as {
+        location?: { latitude: number; longitude: number };
+      };
+      if (!data.location) return;
+      onSelect(s.placeName, data.location.latitude, data.location.longitude);
+    } catch {
+      // coords unavailable — address text is still set in the field
+    }
+  }
+
+  // Close when clicking outside the component
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative flex flex-col gap-1.5">
+      <label className="text-sm font-medium text-gray-700">
+        Delivery address <span className="sr-only">(required)</span>
+      </label>
+      <input
+        value={value}
+        onChange={handleInput}
+        placeholder="Westlands, Nairobi"
+        required
+        autoComplete="off"
+        className={INPUT_CLASS}
+      />
+      {open && suggestions.length > 0 && (
+        <ul className="absolute z-20 left-0 right-0 top-full mt-1 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden">
+          {suggestions.map((s) => (
+            <li key={s.placeId}>
+              {/* onMouseDown + preventDefault prevents the input blur from closing
+                  the dropdown before the click registers */}
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); handleSelect(s); }}
+                className="w-full text-left px-3 py-2.5 text-sm text-gray-800 hover:bg-blue-50 flex items-start gap-2.5 transition-colors"
+              >
+                <svg className="w-4 h-4 shrink-0 mt-0.5 text-gray-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+                </svg>
+                <span className="leading-snug">
+                  <span className="font-medium text-gray-900">{s.name}</span>
+                  {s.placeName !== s.name && (
+                    <span className="block text-xs text-gray-500 mt-0.5">{s.placeName}</span>
+                  )}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ─── Create delivery form ────────────────────────────────────────────────────
 
 const EMPTY = { customerName: "", customerPhone: "", deliveryAddress: "", notes: "" };
 
 function CreateForm() {
   const [fields, setFields] = useState(EMPTY);
+  const [addressCoords, setAddressCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const firstRef = useRef<HTMLInputElement>(null);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setFields((f) => ({ ...f, [e.target.name]: e.target.value }));
+  }
+
+  // Called when the user types in the address field manually (clears any saved coords)
+  function handleAddressChange(text: string) {
+    setFields((f) => ({ ...f, deliveryAddress: text }));
+    setAddressCoords(null);
+  }
+
+  // Called when the user picks a suggestion (saves coords)
+  function handleAddressSelect(address: string, lat: number, lng: number) {
+    setFields((f) => ({ ...f, deliveryAddress: address }));
+    setAddressCoords({ lat, lng });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -353,8 +541,10 @@ function CreateForm() {
         notes:           fields.notes.trim(),
         status:          "unassigned",
         createdAt:       serverTimestamp(),
+        ...(addressCoords ?? {}),
       });
       setFields(EMPTY);
+      setAddressCoords(null);
       firstRef.current?.focus();
     } finally {
       setSubmitting(false);
@@ -392,15 +582,20 @@ function CreateForm() {
         </Field>
       </div>
 
-      <Field label="Delivery address" required>
-        <input
-          name="deliveryAddress"
-          value={fields.deliveryAddress}
-          onChange={handleChange}
-          placeholder="Westlands, Nairobi"
-          required
-        />
-      </Field>
+      <AddressAutocomplete
+        value={fields.deliveryAddress}
+        onChange={handleAddressChange}
+        onSelect={handleAddressSelect}
+      />
+
+      {addressCoords && (
+        <p className="text-xs text-green-600 flex items-center gap-1 -mt-2">
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+          </svg>
+          Location pinned ({addressCoords.lat.toFixed(5)}, {addressCoords.lng.toFixed(5)})
+        </p>
+      )}
 
       <Field label="Order notes">
         <textarea
@@ -423,30 +618,6 @@ function CreateForm() {
         {submitting ? "Saving…" : "Create Delivery"}
       </button>
     </form>
-  );
-}
-
-const INPUT_CLASS =
-  "border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 " +
-  "placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactElement<{ className?: string }>;
-}) {
-  return (
-    <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
-      {label}
-      {required && <span className="sr-only"> (required)</span>}
-      {React.cloneElement(children, {
-        className: `${INPUT_CLASS} ${children.props.className ?? ""}`.trim(),
-      })}
-    </label>
   );
 }
 

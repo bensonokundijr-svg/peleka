@@ -11,6 +11,8 @@ export interface Delivery {
   riderId?: string;
   riderName?: string;
   riderPhone?: string;
+  lat?: number;
+  lng?: number;
 }
 
 export interface Rider {
