@@ -4,43 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
 import { ref as dbRef, get, update } from "firebase/database";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useAuth } from "@/lib/auth-context";
 
 const INPUT = "w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
-const STORAGE_BUCKET = "pelaka-eed7a.firebasestorage.app";
-
-async function uploadLogoREST(
-  file: File,
-  uid: string,
-  token: string,
-): Promise<string> {
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-  const encodedPath = `logos%2F${uid}%2Flogo.${ext}`;
-  const uploadUrl =
-    `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?uploadType=media`;
-
-  const res = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": file.type || "application/octet-stream",
-    },
-    body: file,
-  });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(body?.error?.message ?? `Storage responded with HTTP ${res.status}`);
-  }
-
-  const data = await res.json() as { downloadTokens?: string };
-  // downloadTokens is present in the response when the bucket has download tokens enabled.
-  // Fall back to a token-free URL if absent (works when Storage rules allow public read).
-  const tokenParam = data.downloadTokens ? `&token=${data.downloadTokens}` : "";
-  return `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?alt=media${tokenParam}`;
-}
 
 function dbErrorMessage(err: unknown): string {
   const code = (err as { code?: string }).code ?? "";
@@ -114,13 +83,26 @@ export default function SettingsPage() {
 
       if (logoFile) {
         try {
-          // Use the REST API directly so auth token handling is explicit —
-          // getIdToken() here bypasses any SDK-level auth caching differences
-          // between Google OAuth and email/password accounts.
-          const token = await user.getIdToken();
-          finalLogoUrl = await uploadLogoREST(logoFile, user.uid, token);
+          // Force-refresh the token immediately before the upload so the SDK
+          // sends a current token regardless of provider or cache state.
+          await user.getIdToken(true);
+
+          const ext = logoFile.name.split(".").pop() ?? "jpg";
+          const logoRef = storageRef(storage, `logos/${user.uid}/logo.${ext}`);
+
+          // Race the upload against an 8 s timeout so a hung Storage request
+          // never blocks the whole save — name and phone still get written.
+          const uploadTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("upload-timeout")), 8_000),
+          );
+          await Promise.race([uploadBytes(logoRef, logoFile), uploadTimeout]);
+
+          finalLogoUrl = await getDownloadURL(logoRef);
         } catch (err) {
-          logoWarning = `Logo upload failed: ${err instanceof Error ? err.message : String(err)}`;
+          logoWarning =
+            err instanceof Error && err.message === "upload-timeout"
+              ? "Logo upload timed out — name and phone were saved."
+              : `Logo upload failed: ${err instanceof Error ? err.message : String(err)}`;
         }
       }
 
