@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { db, storage } from "@/lib/firebase";
@@ -40,6 +41,7 @@ export default function SettingsPage() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auth guard
   useEffect(() => {
@@ -79,6 +81,17 @@ export default function SettingsPage() {
     let finalLogoUrl = logoUrl;
     let logoWarning: string | null = null;
     if (logoFile) {
+      // Force-refresh the ID token before upload. Email/password tokens can
+      // carry a stale email_verified=false claim if the token was issued before
+      // email verification propagated — Storage rules that check this claim
+      // will reject the upload even though user.emailVerified is true.
+      // Google OAuth always has email_verified=true so it never hits this.
+      try {
+        await user.getIdToken(/* forceRefresh */ true);
+      } catch {
+        // Token refresh failure is non-fatal; proceed and let the upload
+        // surface the real error if the token is genuinely invalid.
+      }
       try {
         const ext = logoFile.name.split(".").pop() ?? "jpg";
         const logoRef = storageRef(storage, `logos/${user.uid}/logo.${ext}`);
@@ -96,19 +109,24 @@ export default function SettingsPage() {
         ...(finalLogoUrl ? { logoUrl: finalLogoUrl } : {}),
       });
 
-      setBusinessName(businessName.trim());
-      setPhone(phone.trim());
-      setLogoUrl(finalLogoUrl);
-      setLogoFile(null);
-      setLogoPreview(null);
-      setSaving(false);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 4000);
+      flushSync(() => {
+        setBusinessName(businessName.trim());
+        setPhone(phone.trim());
+        setLogoUrl(finalLogoUrl);
+        setLogoFile(null);
+        setLogoPreview(null);
+        setSaving(false);
+        setSuccess(true);
+        if (logoWarning) setError(logoWarning);
+      });
 
-      if (logoWarning) setError(logoWarning);
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+      successTimerRef.current = setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(dbErrorMessage(err));
-      setSaving(false);
+      flushSync(() => {
+        setError(dbErrorMessage(err));
+        setSaving(false);
+      });
     }
   }
 
