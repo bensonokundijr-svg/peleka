@@ -1,0 +1,46 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "deliveries": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+
+    "riders-list": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+
+    "businesses": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+
+    "delivery-index": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+
+    "rider-index": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+
+    "riders": {
+      "$riderId": {
+        "location": {
+          ".read": true,
+          ".write": true
+        }
+      }
+    }
+  }
+}

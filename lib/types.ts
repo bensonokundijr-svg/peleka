@@ -1,4 +1,4 @@
-export type DeliveryStatus = "unassigned" | "assigned" | "dispatched" | "delivered";
+export type DeliveryStatus = "unassigned" | "assigned" | "dispatched" | "delivered" | "failed";
 
 export interface Delivery {
   id: string;

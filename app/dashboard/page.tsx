@@ -1,8 +1,11 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { db } from "@/lib/firebase";
-import { ref, push, update, remove, onValue, serverTimestamp } from "firebase/database";
+import { ref, push, set, update, remove, onValue, serverTimestamp } from "firebase/database";
+import { useAuth } from "@/lib/auth-context";
 import type { Delivery, DeliveryStatus, Rider } from "@/lib/types";
 
 
@@ -13,6 +16,7 @@ const STATUS_STYLES: Record<DeliveryStatus, string> = {
   assigned:   "bg-blue-100 text-blue-700",
   dispatched: "bg-amber-100 text-amber-700",
   delivered:  "bg-green-100 text-green-700",
+  failed:     "bg-red-100 text-red-700",
 };
 
 function StatusBadge({ status }: { status: DeliveryStatus }) {
@@ -31,6 +35,8 @@ interface AssignModalProps {
 }
 
 function AssignModal({ onConfirm, onClose }: AssignModalProps) {
+  const { user } = useAuth();
+  const uid = user!.uid;
   const [riders, setRiders] = useState<Rider[]>([]);
   const [loadingRiders, setLoadingRiders] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
@@ -45,7 +51,7 @@ function AssignModal({ onConfirm, onClose }: AssignModalProps) {
   }, [onClose]);
 
   useEffect(() => {
-    const unsub = onValue(ref(db, "riders-list"), (snap) => {
+    const unsub = onValue(ref(db, `riders-list/${uid}`), (snap) => {
       const data = snap.val() as Record<string, Omit<Rider, "id">> | null;
       setRiders(data ? Object.entries(data).map(([id, v]) => ({ id, ...v })) : []);
       setLoadingRiders(false);
@@ -146,7 +152,9 @@ function AssignModal({ onConfirm, onClose }: AssignModalProps) {
 
 // ─── Delivery card ───────────────────────────────────────────────────────────
 
-function DeliveryCard({ delivery }: { delivery: Delivery }) {
+function DeliveryCard({ delivery, businessName }: { delivery: Delivery; businessName: string }) {
+  const { user } = useAuth();
+  const uid = user!.uid;
   const [showAssign, setShowAssign] = useState(false);
   const [dispatching, setDispatching] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -169,7 +177,7 @@ function DeliveryCard({ delivery }: { delivery: Delivery }) {
   });
 
   async function handleAssign(rider: Rider) {
-    await update(ref(db, `deliveries/${delivery.id}`), {
+    await update(ref(db, `deliveries/${uid}/${delivery.id}`), {
       status:     "assigned",
       riderId:    rider.id,
       riderName:  rider.name,
@@ -178,20 +186,23 @@ function DeliveryCard({ delivery }: { delivery: Delivery }) {
     setShowAssign(false);
   }
 
-  const trackingUrl = `http://localhost:3000/track/${delivery.id}`;
+  const trackingUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/track/${delivery.id}`;
 
   async function handleDispatch() {
     if (dispatching) return;
     setDispatching(true);
     try {
-      await update(ref(db, `deliveries/${delivery.id}`), { status: "dispatched" });
+      await update(ref(db, `deliveries/${uid}/${delivery.id}`), { status: "dispatched" });
 
-      const message = `Your order is on the way! Track your delivery here: ${trackingUrl}`;
       try {
         const res = await fetch("/api/send-sms", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: delivery.customerPhone, message }),
+          body: JSON.stringify({
+            to: delivery.customerPhone,
+            trackingUrl,
+            businessName: businessName || undefined,
+          }),
         });
         setSmsState(res.ok ? "sent" : "failed");
       } catch {
@@ -252,7 +263,7 @@ function DeliveryCard({ delivery }: { delivery: Delivery }) {
 
         {smsState === "failed" && (
           <a
-            href={`https://wa.me/?text=${encodeURIComponent(`Your order is on the way! Track your delivery here: ${trackingUrl}`)}`}
+            href={`https://wa.me/?text=${encodeURIComponent(`Your order from ${businessName || "Peleka"} is on the way! Track your delivery here: ${trackingUrl}`)}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg
@@ -508,6 +519,8 @@ function AddressAutocomplete({
 const EMPTY = { customerName: "", customerPhone: "", deliveryAddress: "", notes: "" };
 
 function CreateForm() {
+  const { user } = useAuth();
+  const uid = user!.uid;
   const [fields, setFields] = useState(EMPTY);
   const [addressCoords, setAddressCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -534,7 +547,7 @@ function CreateForm() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await push(ref(db, "deliveries"), {
+      const newRef = await push(ref(db, `deliveries/${uid}`), {
         customerName:    fields.customerName.trim(),
         customerPhone:   fields.customerPhone.trim(),
         deliveryAddress: fields.deliveryAddress.trim(),
@@ -543,6 +556,9 @@ function CreateForm() {
         createdAt:       serverTimestamp(),
         ...(addressCoords ?? {}),
       });
+      if (newRef.key) {
+        await set(ref(db, `delivery-index/${newRef.key}`), uid);
+      }
       setFields(EMPTY);
       setAddressCoords(null);
       firstRef.current?.focus();
@@ -624,6 +640,8 @@ function CreateForm() {
 // ─── Riders section ──────────────────────────────────────────────────────────
 
 function RidersSection() {
+  const { user } = useAuth();
+  const uid = user!.uid;
   const [riders, setRiders] = useState<Rider[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -633,20 +651,23 @@ function RidersSection() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = onValue(ref(db, "riders-list"), (snap) => {
+    const unsub = onValue(ref(db, `riders-list/${uid}`), (snap) => {
       const data = snap.val() as Record<string, Omit<Rider, "id">> | null;
       setRiders(data ? Object.entries(data).map(([id, v]) => ({ id, ...v })) : []);
       setLoading(false);
     });
     return unsub;
-  }, []);
+  }, [uid]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !phone.trim() || saving) return;
     setSaving(true);
     try {
-      await push(ref(db, "riders-list"), { name: name.trim(), phone: phone.trim() });
+      const newRef = await push(ref(db, `riders-list/${uid}`), { name: name.trim(), phone: phone.trim() });
+      if (newRef.key) {
+        await set(ref(db, `rider-index/${newRef.key}`), uid);
+      }
       setName("");
       setPhone("");
       setShowForm(false);
@@ -656,7 +677,7 @@ function RidersSection() {
   }
 
   async function handleRemove(id: string) {
-    await remove(ref(db, `riders-list/${id}`));
+    await remove(ref(db, `riders-list/${uid}/${id}`));
   }
 
   async function handleCopyLink(id: string) {
@@ -799,12 +820,25 @@ function RidersSection() {
 // ─── Dashboard page ──────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const { user, loading: authLoading, signOut } = useAuth();
+  const router = useRouter();
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [loading, setLoading] = useState(true);
+  const [businessName, setBusinessName] = useState("");
+
+  // Subscribe to business profile for name (used in messages + header)
+  useEffect(() => {
+    if (!user) return;
+    return onValue(ref(db, `businesses/${user.uid}/profile`), (snap) => {
+      setBusinessName(snap.val()?.businessName ?? "");
+    });
+  }, [user]);
 
   useEffect(() => {
-    const deliveriesRef = ref(db, "deliveries");
-    const unsubscribe = onValue(deliveriesRef, (snapshot) => {
+    if (authLoading) return;
+    if (!user) { router.replace("/login"); return; }
+
+    const unsubscribe = onValue(ref(db, `deliveries/${user.uid}`), (snapshot) => {
       const data = snapshot.val() as Record<string, Omit<Delivery, "id">> | null;
       if (!data) {
         setDeliveries([]);
@@ -817,21 +851,49 @@ export default function DashboardPage() {
       setLoading(false);
     });
     return unsubscribe;
-  }, []);
+  }, [user, authLoading, router]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
-            </svg>
+        <div className="max-w-3xl mx-auto flex items-center justify-between w-full gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold text-gray-900 leading-tight truncate">
+                {businessName || "Peleka Dashboard"}
+              </h1>
+              <p className="text-xs text-gray-500 truncate">{user.email}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-gray-900 leading-tight">Peleka Dashboard</h1>
-            <p className="text-xs text-gray-500">Delivery management</p>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/settings"
+              className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              Settings
+            </Link>
+            <button
+              onClick={() => signOut().then(() => router.push("/login"))}
+              className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </header>
@@ -869,7 +931,7 @@ export default function DashboardPage() {
           {!loading && deliveries.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {deliveries.map((d) => (
-                <DeliveryCard key={d.id} delivery={d} />
+                <DeliveryCard key={d.id} delivery={d} businessName={businessName} />
               ))}
             </div>
           )}

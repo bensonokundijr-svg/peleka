@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import mapboxgl from "mapbox-gl";
 import { db } from "@/lib/firebase";
-import { ref, onValue } from "firebase/database";
+import { ref, onValue, get } from "firebase/database";
 import type { Delivery, DeliveryStatus } from "@/lib/types";
 
 // ─── Status step definitions ──────────────────────────────────────────────────
@@ -117,6 +117,7 @@ function InfoCard({ delivery }: { delivery: Delivery }) {
     assigned:   "A rider has been assigned and will pick up your order soon.",
     dispatched: "Your delivery is on the way!",
     delivered:  "Your order has been delivered. Enjoy!",
+    failed:     "There was an issue with your delivery. Please contact us.",
   };
 
   return (
@@ -306,12 +307,23 @@ export default function TrackPage() {
   const params = useParams();
   const id = params.id as string;
 
+  const [ownerUid, setOwnerUid] = useState<string | null>(null);
   const [delivery, setDelivery] = useState<Delivery | null | "not_found">(null);
 
+  // One-time lookup to find which business owns this delivery
   useEffect(() => {
     if (!id) return;
-    const deliveryRef = ref(db, `deliveries/${id}`);
-    const unsub = onValue(deliveryRef, (snap) => {
+    get(ref(db, `delivery-index/${id}`)).then((snap) => {
+      const uid = snap.val() as string | null;
+      if (!uid) setDelivery("not_found");
+      else setOwnerUid(uid);
+    });
+  }, [id]);
+
+  // Subscribe to the delivery once we know the owner uid
+  useEffect(() => {
+    if (!ownerUid || !id) return;
+    const unsub = onValue(ref(db, `deliveries/${ownerUid}/${id}`), (snap) => {
       const data = snap.val();
       if (!data) {
         setDelivery("not_found");
@@ -320,7 +332,7 @@ export default function TrackPage() {
       }
     });
     return unsub;
-  }, [id]);
+  }, [id, ownerUid]);
 
   // Loading
   if (delivery === null) {
