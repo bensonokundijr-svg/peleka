@@ -78,36 +78,41 @@ export default function SettingsPage() {
     setError(null);
     setSuccess(false);
 
-    let finalLogoUrl = logoUrl;
-    let logoWarning: string | null = null;
-    if (logoFile) {
-      // Force-refresh the ID token before upload. Email/password tokens can
-      // carry a stale email_verified=false claim if the token was issued before
-      // email verification propagated — Storage rules that check this claim
-      // will reject the upload even though user.emailVerified is true.
-      // Google OAuth always has email_verified=true so it never hits this.
-      try {
-        await user.getIdToken(/* forceRefresh */ true);
-      } catch {
-        // Token refresh failure is non-fatal; proceed and let the upload
-        // surface the real error if the token is genuinely invalid.
-      }
-      try {
-        const ext = logoFile.name.split(".").pop() ?? "jpg";
-        const logoRef = storageRef(storage, `logos/${user.uid}/logo.${ext}`);
-        await uploadBytes(logoRef, logoFile);
-        finalLogoUrl = await getDownloadURL(logoRef);
-      } catch (err) {
-        logoWarning = storageErrorMessage(err);
-      }
-    }
+    // If the entire operation exceeds 10 s, unblock the UI and tell the user.
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      flushSync(() => {
+        setSaving(false);
+        setError("Save timed out — please try again.");
+      });
+    }, 10_000);
 
     try {
+      let finalLogoUrl = logoUrl;
+      let logoWarning: string | null = null;
+
+      if (logoFile) {
+        // Let the Firebase Storage SDK handle auth automatically — no manual
+        // token refresh needed; it calls getIdToken() internally before upload.
+        try {
+          const ext = logoFile.name.split(".").pop() ?? "jpg";
+          const logoRef = storageRef(storage, `logos/${user.uid}/logo.${ext}`);
+          await uploadBytes(logoRef, logoFile);
+          finalLogoUrl = await getDownloadURL(logoRef);
+        } catch (err) {
+          logoWarning = storageErrorMessage(err);
+        }
+      }
+
       await update(dbRef(db, `businesses/${user.uid}/profile`), {
         businessName: businessName.trim(),
         phone: phone.trim(),
         ...(finalLogoUrl ? { logoUrl: finalLogoUrl } : {}),
       });
+
+      clearTimeout(timeoutId);
+      if (timedOut) return; // timeout already reset the UI
 
       flushSync(() => {
         setBusinessName(businessName.trim());
@@ -123,8 +128,16 @@ export default function SettingsPage() {
       if (successTimerRef.current) clearTimeout(successTimerRef.current);
       successTimerRef.current = setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
+      clearTimeout(timeoutId);
+      if (timedOut) return; // timeout already reset the UI
+
+      const code = (err as { code?: string }).code ?? "";
+      const msg = code.startsWith("auth/")
+        ? "Session error — please sign out and sign back in, then try again."
+        : dbErrorMessage(err);
+
       flushSync(() => {
-        setError(dbErrorMessage(err));
+        setError(msg);
         setSaving(false);
       });
     }
