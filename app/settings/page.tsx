@@ -9,6 +9,38 @@ import { ref as dbRef, get, update } from "firebase/database";
 import { useAuth } from "@/lib/auth-context";
 
 const INPUT = "w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
+const STORAGE_BUCKET = "pelaka-eed7a.firebasestorage.app";
+
+async function uploadLogoREST(
+  file: File,
+  uid: string,
+  token: string,
+): Promise<string> {
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
+  const encodedPath = `logos%2F${uid}%2Flogo.${ext}`;
+  const uploadUrl =
+    `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?uploadType=media`;
+
+  const res = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: { message?: string } };
+    throw new Error(body?.error?.message ?? `Storage responded with HTTP ${res.status}`);
+  }
+
+  const data = await res.json() as { downloadTokens?: string };
+  // downloadTokens is present in the response when the bucket has download tokens enabled.
+  // Fall back to a token-free URL if absent (works when Storage rules allow public read).
+  const tokenParam = data.downloadTokens ? `&token=${data.downloadTokens}` : "";
+  return `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?alt=media${tokenParam}`;
+}
 
 function dbErrorMessage(err: unknown): string {
   const code = (err as { code?: string }).code ?? "";
@@ -22,10 +54,14 @@ export default function SettingsPage() {
 
   const [businessName, setBusinessName] = useState("");
   const [phone, setPhone] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auth guard
@@ -42,11 +78,19 @@ export default function SettingsPage() {
         if (data) {
           setBusinessName(data.businessName ?? "");
           setPhone(data.phone ?? "");
+          setLogoUrl(data.logoUrl ?? "");
         }
         setLoadingProfile(false);
       })
       .catch(() => setLoadingProfile(false));
   }, [user]);
+
+  function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -65,9 +109,25 @@ export default function SettingsPage() {
     }, 10_000);
 
     try {
+      let finalLogoUrl = logoUrl;
+      let logoWarning: string | null = null;
+
+      if (logoFile) {
+        try {
+          // Use the REST API directly so auth token handling is explicit —
+          // getIdToken() here bypasses any SDK-level auth caching differences
+          // between Google OAuth and email/password accounts.
+          const token = await user.getIdToken();
+          finalLogoUrl = await uploadLogoREST(logoFile, user.uid, token);
+        } catch (err) {
+          logoWarning = `Logo upload failed: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+
       await update(dbRef(db, `businesses/${user.uid}/profile`), {
         businessName: businessName.trim(),
         phone: phone.trim(),
+        ...(finalLogoUrl ? { logoUrl: finalLogoUrl } : {}),
       });
 
       clearTimeout(timeoutId);
@@ -76,8 +136,12 @@ export default function SettingsPage() {
       flushSync(() => {
         setBusinessName(businessName.trim());
         setPhone(phone.trim());
+        setLogoUrl(finalLogoUrl);
+        setLogoFile(null);
+        setLogoPreview(null);
         setSaving(false);
         setSuccess(true);
+        if (logoWarning) setError(logoWarning);
       });
 
       if (successTimerRef.current) clearTimeout(successTimerRef.current);
@@ -107,6 +171,8 @@ export default function SettingsPage() {
   }
 
   if (!user) return null;
+
+  const displayLogo = logoPreview ?? logoUrl;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -142,6 +208,40 @@ export default function SettingsPage() {
         <form onSubmit={handleSave} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col gap-6">
           <h2 className="text-base font-semibold text-gray-900">Business Profile</h2>
 
+          {/* Logo */}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-gray-700">Logo</label>
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-xl border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden shrink-0">
+                {displayLogo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={displayLogo} alt="Business logo" className="w-full h-full object-cover" />
+                ) : (
+                  <svg className="w-7 h-7 text-gray-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z" />
+                  </svg>
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  {displayLogo ? "Change logo" : "Upload logo"}
+                </button>
+                <p className="text-xs text-gray-400">PNG, JPG or WebP, max 2 MB</p>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleLogoChange}
+                  className="hidden"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Business name */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-gray-700">Business name</label>
@@ -168,7 +268,7 @@ export default function SettingsPage() {
           </div>
 
           {error && (
-            <p className="text-sm text-red-600">{error}</p>
+            <p className={`text-sm ${success ? "text-amber-600" : "text-red-600"}`}>{error}</p>
           )}
 
           <div className="flex items-center gap-3 pt-1">
