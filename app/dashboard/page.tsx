@@ -2,15 +2,9 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { db } from "@/lib/firebase";
-import { ref, push, update, onValue, serverTimestamp } from "firebase/database";
-import type { Delivery, DeliveryStatus } from "@/lib/types";
+import { ref, push, update, remove, onValue, serverTimestamp } from "firebase/database";
+import type { Delivery, DeliveryStatus, Rider } from "@/lib/types";
 
-// ─── Test riders ─────────────────────────────────────────────────────────────
-
-const RIDERS = [
-  { name: "John Kamau",   phone: "0712 000 001" },
-  { name: "Peter Mwangi", phone: "0712 000 002" },
-];
 
 // ─── Status badge ────────────────────────────────────────────────────────────
 
@@ -32,15 +26,16 @@ function StatusBadge({ status }: { status: DeliveryStatus }) {
 // ─── Assign rider modal ───────────────────────────────────────────────────────
 
 interface AssignModalProps {
-  onConfirm: (rider: { name: string; phone: string }) => Promise<void>;
+  onConfirm: (rider: Rider) => Promise<void>;
   onClose: () => void;
 }
 
 function AssignModal({ onConfirm, onClose }: AssignModalProps) {
-  const [selected, setSelected] = useState<number | null>(null);
+  const [riders, setRiders] = useState<Rider[]>([]);
+  const [loadingRiders, setLoadingRiders] = useState(true);
+  const [selected, setSelected] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -49,18 +44,28 @@ function AssignModal({ onConfirm, onClose }: AssignModalProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    const unsub = onValue(ref(db, "riders-list"), (snap) => {
+      const data = snap.val() as Record<string, Omit<Rider, "id">> | null;
+      setRiders(data ? Object.entries(data).map(([id, v]) => ({ id, ...v })) : []);
+      setLoadingRiders(false);
+    });
+    return unsub;
+  }, []);
+
   async function handleConfirm() {
-    if (selected === null || saving) return;
+    if (!selected || saving) return;
+    const rider = riders.find((r) => r.id === selected);
+    if (!rider) return;
     setSaving(true);
     try {
-      await onConfirm(RIDERS[selected]);
+      await onConfirm(rider);
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    // Backdrop
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -68,45 +73,54 @@ function AssignModal({ onConfirm, onClose }: AssignModalProps) {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-900">Assign a rider</h3>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-            aria-label="Close"
-          >
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors" aria-label="Close">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        <div className="flex flex-col gap-2">
-          {RIDERS.map((rider, i) => (
-            <button
-              key={rider.phone}
-              onClick={() => setSelected(i)}
-              className={`flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-colors
-                ${selected === i
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-gray-200 hover:border-gray-300 bg-white"
-                }`}
-            >
-              {/* Avatar */}
-              <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-bold
-                ${selected === i ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-600"}`}>
-                {rider.name.charAt(0)}
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-900 leading-tight">{rider.name}</p>
-                <p className="text-xs text-gray-500">{rider.phone}</p>
-              </div>
-              {selected === i && (
-                <svg className="w-4 h-4 text-blue-500 ml-auto" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clipRule="evenodd" />
-                </svg>
-              )}
-            </button>
-          ))}
-        </div>
+        {loadingRiders && (
+          <div className="flex justify-center py-4">
+            <div className="w-5 h-5 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+          </div>
+        )}
+
+        {!loadingRiders && riders.length === 0 && (
+          <p className="text-sm text-gray-500 text-center py-4">
+            No riders yet. Add riders in the Riders section.
+          </p>
+        )}
+
+        {!loadingRiders && riders.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {riders.map((rider) => (
+              <button
+                key={rider.id}
+                onClick={() => setSelected(rider.id)}
+                className={`flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-colors
+                  ${selected === rider.id
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-gray-200 hover:border-gray-300 bg-white"
+                  }`}
+              >
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-bold
+                  ${selected === rider.id ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-600"}`}>
+                  {rider.name.charAt(0)}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-900 leading-tight">{rider.name}</p>
+                  <p className="text-xs text-gray-500">{rider.phone}</p>
+                </div>
+                {selected === rider.id && (
+                  <svg className="w-4 h-4 text-blue-500 ml-auto" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex gap-3 pt-1">
           <button
@@ -117,7 +131,7 @@ function AssignModal({ onConfirm, onClose }: AssignModalProps) {
           </button>
           <button
             onClick={handleConfirm}
-            disabled={selected === null || saving}
+            disabled={!selected || saving || loadingRiders}
             className="flex-1 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold
               hover:bg-blue-700 active:bg-blue-800 transition-colors
               disabled:opacity-50 disabled:cursor-not-allowed"
@@ -154,9 +168,10 @@ function DeliveryCard({ delivery }: { delivery: Delivery }) {
     day: "numeric",
   });
 
-  async function handleAssign(rider: { name: string; phone: string }) {
+  async function handleAssign(rider: Rider) {
     await update(ref(db, `deliveries/${delivery.id}`), {
       status:     "assigned",
+      riderId:    rider.id,
       riderName:  rider.name,
       riderPhone: rider.phone,
     });
@@ -435,6 +450,181 @@ function Field({
   );
 }
 
+// ─── Riders section ──────────────────────────────────────────────────────────
+
+function RidersSection() {
+  const [riders, setRiders] = useState<Rider[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsub = onValue(ref(db, "riders-list"), (snap) => {
+      const data = snap.val() as Record<string, Omit<Rider, "id">> | null;
+      setRiders(data ? Object.entries(data).map(([id, v]) => ({ id, ...v })) : []);
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !phone.trim() || saving) return;
+    setSaving(true);
+    try {
+      await push(ref(db, "riders-list"), { name: name.trim(), phone: phone.trim() });
+      setName("");
+      setPhone("");
+      setShowForm(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemove(id: string) {
+    await remove(ref(db, `riders-list/${id}`));
+  }
+
+  async function handleCopyLink(id: string) {
+    await navigator.clipboard.writeText(`${window.location.origin}/rider/${id}`);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  }
+
+  return (
+    <section className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-900">
+          Riders
+          {!loading && (
+            <span className="ml-2 text-sm font-normal text-gray-400">({riders.length})</span>
+          )}
+        </h2>
+        {!showForm && (
+          <button
+            onClick={() => setShowForm(true)}
+            className="text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors flex items-center gap-1.5"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Add Rider
+          </button>
+        )}
+      </div>
+
+      {showForm && (
+        <form
+          onSubmit={handleAdd}
+          className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex flex-col gap-3"
+        >
+          <p className="text-sm font-semibold text-gray-900">New rider</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Full name"
+              required
+              autoFocus
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="Phone number"
+              type="tel"
+              required
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => { setShowForm(false); setName(""); setPhone(""); }}
+              className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!name.trim() || !phone.trim() || saving}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? "Saving…" : "Save Rider"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {loading && (
+        <div className="flex justify-center py-8">
+          <div className="w-5 h-5 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+        </div>
+      )}
+
+      {!loading && riders.length === 0 && !showForm && (
+        <div className="flex flex-col items-center justify-center py-10 gap-2 text-gray-400">
+          <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+          </svg>
+          <p className="text-sm">No riders yet — add one above</p>
+        </div>
+      )}
+
+      {!loading && riders.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-100">
+          {riders.map((rider) => (
+            <div key={rider.id} className="flex items-center gap-3 px-4 py-3">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm font-bold text-gray-600 shrink-0">
+                {rider.name.charAt(0)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{rider.name}</p>
+                <p className="text-xs text-gray-500">{rider.phone}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleCopyLink(rider.id)}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors flex items-center gap-1
+                    ${copiedId === rider.id
+                      ? "border-green-300 text-green-600 bg-green-50"
+                      : "border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50"
+                    }`}
+                >
+                  {copiedId === rider.id ? (
+                    <>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                      </svg>
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+                      </svg>
+                      Copy link
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => handleRemove(rider.id)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-red-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600 transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Dashboard page ──────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -477,6 +667,7 @@ export default function DashboardPage() {
 
       <main className="max-w-3xl mx-auto px-6 py-8 flex flex-col gap-8">
         <CreateForm />
+        <RidersSection />
 
         {/* Deliveries list */}
         <section className="flex flex-col gap-4">

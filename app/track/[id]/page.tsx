@@ -55,7 +55,7 @@ function StatusSteps({ status }: { status: DeliveryStatus }) {
 
 const NAIROBI: [number, number] = [36.8219, -1.2921];
 
-function RiderMap() {
+function RiderMap({ riderId }: { riderId: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markerRef = useRef<mapboxgl.Marker | null>(null);
@@ -86,7 +86,7 @@ function RiderMap() {
       .addTo(map);
     markerRef.current = marker;
 
-    const locationRef = ref(db, "riders/test-rider/location");
+    const locationRef = ref(db, `riders/${riderId}/location`);
     const unsub = onValue(locationRef, (snap) => {
       const d = snap.val();
       if (!d?.lat || !d?.lng) return;
@@ -102,6 +102,8 @@ function RiderMap() {
       mapRef.current?.remove();
       mapRef.current = null;
     };
+  // riderId is stable for a dispatched delivery — intentionally not in deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return <div ref={containerRef} className="w-full h-full" />;
@@ -193,7 +195,7 @@ function DispatchedView({ delivery }: { delivery: Delivery }) {
     <div className="relative h-screen w-full overflow-hidden">
       {/* Map fills the screen */}
       <div className="absolute inset-0">
-        <RiderMap />
+        <RiderMap riderId={delivery.riderId ?? "test-rider"} />
       </div>
 
       {/* Bottom sheet */}

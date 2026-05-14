@@ -8,6 +8,13 @@ export interface Delivery {
   notes: string;
   status: DeliveryStatus;
   createdAt: number;
+  riderId?: string;
   riderName?: string;
   riderPhone?: string;
+}
+
+export interface Rider {
+  id: string;
+  name: string;
+  phone: string;
 }
