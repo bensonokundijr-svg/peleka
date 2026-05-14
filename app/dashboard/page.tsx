@@ -278,7 +278,7 @@ function DeliveryCard({ delivery, businessName }: { delivery: Delivery; business
         )}
 
         {/* Footer: timestamp + action buttons */}
-        <div className="flex items-center justify-between border-t border-gray-100 pt-2 gap-2 flex-wrap">
+        <div className="flex flex-col gap-2 border-t border-gray-100 pt-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <p className="text-xs text-gray-400">{date} at {time}</p>
             <button

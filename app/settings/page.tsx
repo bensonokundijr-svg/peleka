@@ -10,6 +10,22 @@ import { useAuth } from "@/lib/auth-context";
 
 const INPUT = "w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
 
+function storageErrorMessage(err: unknown): string {
+  const code = (err as { code?: string }).code ?? "";
+  if (code === "storage/unauthorized")    return "Logo upload failed: Storage permission denied. Check your Firebase Storage rules.";
+  if (code === "storage/bucket-not-found") return "Logo upload failed: Storage bucket not found. Check NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET.";
+  if (code === "storage/unknown")         return "Logo upload failed: Firebase Storage may not be enabled in your project.";
+  if (code === "storage/quota-exceeded")  return "Logo upload failed: Storage quota exceeded.";
+  if (code === "storage/canceled")        return "Logo upload was cancelled.";
+  return `Logo upload failed: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+function dbErrorMessage(err: unknown): string {
+  const code = (err as { code?: string }).code ?? "";
+  if (code === "PERMISSION_DENIED") return "Save failed: Database permission denied. Check your Firebase rules.";
+  return `Save failed: ${err instanceof Error ? err.message : String(err)}`;
+}
+
 export default function SettingsPage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const router = useRouter();
@@ -58,28 +74,38 @@ export default function SettingsPage() {
     setError(null);
     setSuccess(false);
 
-    try {
-      let finalLogoUrl = logoUrl;
-
-      if (logoFile) {
+    // Step 1: attempt logo upload independently — never blocks the profile save
+    let finalLogoUrl = logoUrl;
+    let logoWarning: string | null = null;
+    if (logoFile) {
+      try {
         const ext = logoFile.name.split(".").pop() ?? "jpg";
         const logoRef = storageRef(storage, `logos/${user.uid}/logo.${ext}`);
         await uploadBytes(logoRef, logoFile);
         finalLogoUrl = await getDownloadURL(logoRef);
+      } catch (err) {
+        logoWarning = storageErrorMessage(err);
       }
+    }
 
+    // Step 2: save profile to Realtime Database (always runs, even if logo failed)
+    try {
       await update(dbRef(db, `businesses/${user.uid}/profile`), {
         businessName: businessName.trim(),
         phone: phone.trim(),
-        logoUrl: finalLogoUrl,
+        ...(finalLogoUrl ? { logoUrl: finalLogoUrl } : {}),
       });
 
       setLogoUrl(finalLogoUrl);
       setLogoFile(null);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
+      setTimeout(() => setSuccess(false), 4000);
+
+      if (logoWarning) {
+        setError(logoWarning);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save settings.");
+      setError(dbErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -191,7 +217,7 @@ export default function SettingsPage() {
           </div>
 
           {error && (
-            <p className="text-sm text-red-600">{error}</p>
+            <p className={`text-sm ${success ? "text-amber-600" : "text-red-600"}`}>{error}</p>
           )}
 
           <div className="flex items-center gap-3 pt-1">
