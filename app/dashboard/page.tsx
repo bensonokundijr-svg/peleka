@@ -819,9 +819,8 @@ function DispatchedSection({
       await update(ref(db, `deliveries/${uid}/${d.id}`), { status: "delivered", deliveredAt: Date.now() });
       await update(ref(db, `deliveries-public/${d.id}`), { status: "delivered" });
       if (d.riderId) await remove(ref(db, `rider-active/${d.riderId}`));
-      // Schedule feedback SMS
       set(ref(db, `feedback-queue/${d.id}`), {
-        scheduledFor: Date.now() + 600_000,
+        deliveredAt: Date.now(),
         ownerUid: uid,
         customerPhone: d.customerPhone,
         customerName: d.customerName,
@@ -934,9 +933,19 @@ function DispatchedSection({
 
 // ─── DELIVERED section ────────────────────────────────────────────────────────
 
-function DeliveredSection({ deliveries, uid }: { deliveries: Delivery[]; uid: string }) {
+function DeliveredSection({
+  deliveries, uid, feedbackReceivedIds, notifications, feedbackDelay,
+}: {
+  deliveries: Delivery[];
+  uid: string;
+  feedbackReceivedIds: Set<string>;
+  notifications: NotificationEntry[];
+  feedbackDelay: number;
+}) {
   const [period, setPeriod] = useState<Period>("today");
-  const [copiedFeedback, setCopiedFeedback] = useState<string | null>(null);
+  const [copiedFailedId, setCopiedFailedId] = useState<string | null>(null);
+  // uid used for potential future writes
+  void uid;
   const filtered = deliveries.filter((d) => inPeriod(d.deliveredAt ?? d.createdAt, period));
 
   return (
@@ -966,33 +975,62 @@ function DeliveredSection({ deliveries, uid }: { deliveries: Delivery[]; uid: st
                   Dispatched {fmtDateTime(d.dispatchedAt)} → Delivered {fmtDateTime(d.deliveredAt)}
                 </p>
               )}
-              <div className="flex justify-end pt-1.5 border-t border-gray-100 mt-1">
-                <button
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(`${window.location.origin}/feedback/${d.id}`);
-                    setCopiedFeedback(d.id);
-                    setTimeout(() => setCopiedFeedback(null), 2000);
-                  }}
-                  className={`text-xs flex items-center gap-1 transition-colors
-                    ${copiedFeedback === d.id ? "text-green-600" : "text-gray-400 hover:text-blue-600"}`}
-                >
-                  {copiedFeedback === d.id ? (
-                    <>
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                      </svg>
-                      Copied!
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
-                      </svg>
-                      Copy feedback link
-                    </>
-                  )}
-                </button>
-              </div>
+              {/* Smart feedback status */}
+              {(() => {
+                const hasFeedback = feedbackReceivedIds.has(d.id);
+                const failedNotif = notifications.find((n) => n.id === d.id);
+                const msSinceDelivery = Date.now() - (d.deliveredAt ?? 0);
+                const isQueued = feedbackDelay > 0 && !hasFeedback && !failedNotif
+                  && msSinceDelivery < feedbackDelay * 60_000;
+
+                if (!hasFeedback && !failedNotif && !isQueued) return null;
+
+                return (
+                  <div className="pt-1.5 border-t border-gray-100 mt-1">
+                    {hasFeedback && (
+                      <span className="text-xs font-medium text-green-600 flex items-center gap-1">
+                        <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                        </svg>
+                        Feedback received
+                      </span>
+                    )}
+                    {isQueued && (
+                      <span className="text-xs text-amber-600 flex items-center gap-1">
+                        <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                        </svg>
+                        Feedback queued
+                      </span>
+                    )}
+                    {failedNotif && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(failedNotif.feedbackUrl);
+                            setCopiedFailedId(d.id);
+                            setTimeout(() => setCopiedFailedId(null), 2000);
+                          }}
+                          className={`flex-1 text-xs font-medium py-1 rounded-lg border transition-colors text-center
+                            ${copiedFailedId === d.id
+                              ? "border-green-300 bg-green-50 text-green-700"
+                              : "border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50"}`}
+                        >
+                          {copiedFailedId === d.id ? "Copied!" : "Copy feedback link"}
+                        </button>
+                        <a
+                          href={whatsappFeedbackUrl(failedNotif)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 text-xs font-medium py-1 rounded-lg border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 text-center transition-colors"
+                        >
+                          WhatsApp
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>
@@ -1044,6 +1082,113 @@ function FailedSection({ deliveries }: { deliveries: Delivery[] }) {
   );
 }
 
+// ─── Shared helpers ──────────────────────────────────────────────────────────
+
+function whatsappFeedbackUrl(n: { customerPhone: string; customerName: string; feedbackUrl: string }) {
+  const phone = n.customerPhone.replace(/[\s\-()]/g, "").replace(/^\+/, "");
+  const first = n.customerName.split(" ")[0];
+  const msg = encodeURIComponent(`Hi ${first}, we'd love your feedback on your recent delivery! ${n.feedbackUrl}`);
+  return `https://wa.me/${phone}?text=${msg}`;
+}
+
+// ─── Notification panel ───────────────────────────────────────────────────────
+
+interface NotificationEntry {
+  id: string;
+  type: "feedback_sms_failed";
+  customerName: string;
+  customerPhone: string;
+  deliveryId: string;
+  feedbackUrl: string;
+  createdAt: number;
+}
+
+function NotificationsPanel({
+  notifications, uid, onClose,
+}: {
+  notifications: NotificationEntry[];
+  uid: string;
+  onClose: () => void;
+}) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  function dismiss(id: string) {
+    remove(ref(db, `businesses/${uid}/notifications/${id}`)).catch(() => {});
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-900">Notifications</p>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="flex flex-col divide-y divide-gray-100 max-h-96 overflow-y-auto">
+          {notifications.map((n) => (
+            <div key={n.id} className="p-4 flex flex-col gap-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
+                    <svg className="w-3 h-3 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+                    </svg>
+                    Feedback SMS failed
+                  </p>
+                  <p className="text-sm font-medium text-gray-900 mt-0.5">{n.customerName}</p>
+                </div>
+                <button
+                  onClick={() => dismiss(n.id)}
+                  className="text-gray-300 hover:text-gray-500 shrink-0 mt-0.5"
+                  aria-label="Dismiss"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(n.feedbackUrl);
+                    setCopiedId(n.id);
+                    setTimeout(() => setCopiedId(null), 2000);
+                  }}
+                  className={`flex-1 text-xs font-medium py-1.5 rounded-lg border transition-colors
+                    ${copiedId === n.id
+                      ? "border-green-300 bg-green-50 text-green-700"
+                      : "border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50"}`}
+                >
+                  {copiedId === n.id ? "Copied!" : "Copy feedback link"}
+                </button>
+                <a
+                  href={whatsappFeedbackUrl(n)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => dismiss(n.id)}
+                  className="flex-1 text-xs font-medium py-1.5 rounded-lg border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 text-center transition-colors"
+                >
+                  Share via WhatsApp
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Feedback tab ────────────────────────────────────────────────────────────
 
 interface FeedbackWithId extends FeedbackEntry {
@@ -1076,9 +1221,10 @@ function StarRow({ label, value }: { label: string; value: number }) {
   );
 }
 
-function FeedbackTab({ uid }: { uid: string }) {
+function FeedbackTab({ uid, deliveries, flagThreshold }: { uid: string; deliveries: Delivery[]; flagThreshold: number }) {
   const [entries, setEntries] = useState<FeedbackWithId[]>([]);
   const [loadingFb, setLoadingFb] = useState(true);
+  const deliveryMap = new Map(deliveries.map((d) => [d.id, d]));
 
   useEffect(() => {
     return onValue(ref(db, `businesses/${uid}/feedback`), (snap) => {
@@ -1134,34 +1280,53 @@ function FeedbackTab({ uid }: { uid: string }) {
       </div>
 
       <div className="flex flex-col gap-2">
-        {entries.slice(0, 30).map((entry) => (
-          <div key={entry.deliveryId} className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2 shadow-sm">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex flex-col gap-1">
-                <StarRow label="Order" value={entry.orderRating} />
-                <StarRow label="Delivery" value={entry.deliveryRating} />
+        {entries.slice(0, 30).map((entry) => {
+          const delivery = deliveryMap.get(entry.deliveryId);
+          const isFlagged = entry.sentiment === "negative"
+            || entry.orderRating < flagThreshold
+            || entry.deliveryRating < flagThreshold;
+          return (
+            <div
+              key={entry.deliveryId}
+              className={`rounded-xl border p-4 flex flex-col gap-2 shadow-sm
+                ${isFlagged ? "border-red-300 bg-red-50" : "bg-white border-gray-200"}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-col gap-1.5">
+                  {delivery && (
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900 leading-tight">{delivery.customerName}</p>
+                      <p className="text-xs text-gray-500">{delivery.customerPhone}</p>
+                    </div>
+                  )}
+                  <StarRow label="Order" value={entry.orderRating} />
+                  <StarRow label="Delivery" value={entry.deliveryRating} />
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  {entry.sentiment && (
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${SENTIMENT_STYLES[entry.sentiment]}`}>
+                      {entry.sentiment}
+                    </span>
+                  )}
+                  {isFlagged && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Flagged</span>
+                  )}
+                  <span className="text-xs text-gray-400">{fmtDate(entry.submittedAt)}</span>
+                </div>
               </div>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                {entry.sentiment && (
-                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${SENTIMENT_STYLES[entry.sentiment]}`}>
-                    {entry.sentiment}
-                  </span>
-                )}
-                <span className="text-xs text-gray-400">{fmtDate(entry.submittedAt)}</span>
-              </div>
+              {entry.comments && (
+                <p className="text-sm text-gray-700 leading-snug border-t border-gray-100 pt-2">{entry.comments}</p>
+              )}
+              {entry.topics && entry.topics.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {entry.topics.map((t) => (
+                    <span key={t} className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{t}</span>
+                  ))}
+                </div>
+              )}
             </div>
-            {entry.comments && (
-              <p className="text-sm text-gray-700 leading-snug border-t border-gray-100 pt-2">{entry.comments}</p>
-            )}
-            {entry.topics && entry.topics.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {entry.topics.map((t) => (
-                  <span key={t} className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{t}</span>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1293,20 +1458,7 @@ function CreateForm() {
   const [fields, setFields] = useState(EMPTY_FORM);
   const [addressCoords, setAddressCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [showQueuePosition, setShowQueuePosition] = useState(false);
   const firstRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    return onValue(ref(db, `businesses/${uid}/profile/showQueuePosition`), (snap) => {
-      setShowQueuePosition(snap.val() === true);
-    });
-  }, [uid]);
-
-  async function toggleQueuePosition() {
-    const next = !showQueuePosition;
-    setShowQueuePosition(next);
-    await update(ref(db, `businesses/${uid}/profile`), { showQueuePosition: next });
-  }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setFields((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -1382,25 +1534,6 @@ function CreateForm() {
           <Field label="Order notes">
             <textarea name="notes" value={fields.notes} onChange={handleChange} placeholder="Leave at gate, call on arrival…" rows={2} className="resize-none" />
           </Field>
-
-          {/* Queue position toggle */}
-          <div className="flex items-center justify-between gap-4 py-1 border-t border-gray-100 pt-3">
-            <div>
-              <p className="text-sm font-medium text-gray-700">Show queue position to customers</p>
-              <p className="text-xs text-gray-400 mt-0.5">Customers see how many stops are ahead on the tracking page.</p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={showQueuePosition}
-              onClick={toggleQueuePosition}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
-                ${showQueuePosition ? "bg-blue-600" : "bg-gray-200"}`}
-            >
-              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform duration-200
-                ${showQueuePosition ? "translate-x-5" : "translate-x-0"}`} />
-            </button>
-          </div>
 
           <div className="flex justify-end">
             <button
@@ -1560,6 +1693,11 @@ export default function DashboardPage() {
   const [deliveredPeriod, setDeliveredPeriod] = useState<Period>("today");
   const [cancelledPeriod, setCancelledPeriod] = useState<Period>("today");
   const [activeTab, setActiveTab] = useState<"deliveries" | "feedback">("deliveries");
+  const [notifications, setNotifications] = useState<NotificationEntry[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [feedbackReceivedIds, setFeedbackReceivedIds] = useState<Set<string>>(new Set());
+  const [flagThreshold, setFlagThreshold] = useState(3);
+  const [feedbackDelay, setFeedbackDelay] = useState(120);
 
   useEffect(() => {
     if (!user) return;
@@ -1567,6 +1705,24 @@ export default function DashboardPage() {
       const v = snap.val();
       setBusinessName(v?.businessName ?? "");
       setBusinessPhone(v?.phone ?? "");
+      setFlagThreshold(v?.flagThreshold ?? 3);
+      setFeedbackDelay(v?.feedbackDelay ?? 120);
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    return onValue(ref(db, `businesses/${user.uid}/feedback`), (snap) => {
+      const data = snap.val() as Record<string, unknown> | null;
+      setFeedbackReceivedIds(new Set(data ? Object.keys(data) : []));
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    return onValue(ref(db, `businesses/${user.uid}/notifications`), (snap) => {
+      const data = snap.val() as Record<string, Omit<NotificationEntry, "id">> | null;
+      setNotifications(data ? Object.entries(data).map(([id, v]) => ({ id, ...v })) : []);
     });
   }, [user]);
 
@@ -1635,6 +1791,31 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {/* Notification bell */}
+            <div className="relative">
+              {notifications.length > 0 && (
+                <button
+                  onClick={() => setShowNotifications((v) => !v)}
+                  className="relative w-8 h-8 flex items-center justify-center rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 transition-colors"
+                  aria-label={`${notifications.length} notification${notifications.length > 1 ? "s" : ""}`}
+                >
+                  <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
+                  </svg>
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+                    {notifications.length}
+                  </span>
+                </button>
+              )}
+              {showNotifications && notifications.length > 0 && (
+                <NotificationsPanel
+                  notifications={notifications}
+                  uid={uid}
+                  onClose={() => setShowNotifications(false)}
+                />
+              )}
+            </div>
+            <Link href="/automations" className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5">Automations</Link>
             <Link href="/settings" className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5">Settings</Link>
             <button onClick={() => signOut().then(() => router.push("/login"))}
               className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5">Sign out</button>
@@ -1691,7 +1872,9 @@ export default function DashboardPage() {
               ))}
             </div>
 
-            {activeTab === "feedback" && <FeedbackTab uid={uid} />}
+            {activeTab === "feedback" && (
+              <FeedbackTab uid={uid} deliveries={deliveries} flagThreshold={flagThreshold} />
+            )}
 
             {activeTab === "deliveries" && (
               <>
@@ -1782,7 +1965,12 @@ export default function DashboardPage() {
                   deliveries={dispatched} uid={uid}
                   businessName={businessName} businessPhone={businessPhone}
                 />
-                <DeliveredSection deliveries={delivered} uid={uid} />
+                <DeliveredSection
+                  deliveries={delivered} uid={uid}
+                  feedbackReceivedIds={feedbackReceivedIds}
+                  notifications={notifications}
+                  feedbackDelay={feedbackDelay}
+                />
                 <FailedSection deliveries={failed} />
               </>
             )}

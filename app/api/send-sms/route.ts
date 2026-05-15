@@ -20,11 +20,14 @@ const at = AfricasTalking({
   username: process.env.AT_USERNAME!,
 });
 
-function normalizePhone(raw: string): string {
-  const stripped = raw.replace(/\s+/g, "");
-  if (stripped.startsWith("0")) return "+254" + stripped.slice(1);
-  if (!stripped.startsWith("+")) return "+" + stripped;
-  return stripped;
+type PhoneResult = { phone: string; skipSms: boolean };
+
+function normalizePhone(raw: string): PhoneResult {
+  const stripped = raw.replace(/[\s\-()]/g, "");
+  if (stripped.startsWith("0"))    return { phone: "+254" + stripped.slice(1), skipSms: false };
+  if (stripped.startsWith("+254")) return { phone: stripped,                   skipSms: false };
+  if (stripped.startsWith("+"))    return { phone: stripped,                   skipSms: true  }; // international — skip AT SMS
+  return { phone: "+" + stripped, skipSms: false };
 }
 
 export async function POST(request: NextRequest) {
@@ -42,7 +45,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const to = normalizePhone(String(body.to));
+  const { phone: to, skipSms } = normalizePhone(String(body.to));
+  if (skipSms) {
+    console.log("[send-sms] Skipping international number:", to);
+    return NextResponse.json({ success: true, skipped: true, reason: "international_number" });
+  }
   const message: string = body.message
     ? String(body.message)
     : (() => {

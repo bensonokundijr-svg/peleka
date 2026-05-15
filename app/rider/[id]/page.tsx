@@ -230,10 +230,9 @@ export default function RiderTrackingPage() {
         set(ref(db, `deliveries-public/${currentStop.deliveryId}/status`), action),
       ]);
 
-      // Schedule feedback SMS 10 minutes after delivery
       if (action === "delivered") {
         set(ref(db, `feedback-queue/${currentStop.deliveryId}`), {
-          scheduledFor: Date.now() + 600_000,
+          deliveredAt: Date.now(),
           ownerUid: currentStop.ownerUid,
           customerPhone: currentStop.customerPhone,
           customerName: currentStop.customerName,
