@@ -817,6 +817,7 @@ function DispatchedSection({
     try {
       await update(ref(db, `deliveries/${uid}/${d.id}`), { status: "delivered", deliveredAt: Date.now() });
       await update(ref(db, `deliveries-public/${d.id}`), { status: "delivered" });
+      if (d.riderId) await remove(ref(db, `rider-active/${d.riderId}`));
     } finally {
       setMarking(null);
     }
@@ -827,6 +828,7 @@ function DispatchedSection({
       status: "failed", failureReason: reason, deliveredAt: Date.now(),
     });
     await update(ref(db, `deliveries-public/${d.id}`), { status: "failed" });
+    if (d.riderId) await remove(ref(db, `rider-active/${d.riderId}`));
 
     // Cancellation SMS
     const name = businessName || "Peleka";
@@ -1130,7 +1132,20 @@ function CreateForm() {
   const [fields, setFields] = useState(EMPTY_FORM);
   const [addressCoords, setAddressCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showQueuePosition, setShowQueuePosition] = useState(false);
   const firstRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return onValue(ref(db, `businesses/${uid}/profile/showQueuePosition`), (snap) => {
+      setShowQueuePosition(snap.val() === true);
+    });
+  }, [uid]);
+
+  async function toggleQueuePosition() {
+    const next = !showQueuePosition;
+    setShowQueuePosition(next);
+    await update(ref(db, `businesses/${uid}/profile`), { showQueuePosition: next });
+  }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setFields((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -1206,6 +1221,26 @@ function CreateForm() {
           <Field label="Order notes">
             <textarea name="notes" value={fields.notes} onChange={handleChange} placeholder="Leave at gate, call on arrival…" rows={2} className="resize-none" />
           </Field>
+
+          {/* Queue position toggle */}
+          <div className="flex items-center justify-between gap-4 py-1 border-t border-gray-100 pt-3">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Show queue position to customers</p>
+              <p className="text-xs text-gray-400 mt-0.5">Customers see how many stops are ahead on the tracking page.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showQueuePosition}
+              onClick={toggleQueuePosition}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
+                ${showQueuePosition ? "bg-blue-600" : "bg-gray-200"}`}
+            >
+              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform duration-200
+                ${showQueuePosition ? "translate-x-5" : "translate-x-0"}`} />
+            </button>
+          </div>
+
           <div className="flex justify-end">
             <button
               type="submit"
