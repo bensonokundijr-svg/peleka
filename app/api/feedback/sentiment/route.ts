@@ -25,12 +25,18 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 120,
+        max_tokens: 200,
         messages: [
           {
             role: "user",
-            content:
-              `Analyze this delivery service feedback comment. Respond with valid JSON only — no other text, no markdown, no code fences. Format: {"sentiment":"positive"|"neutral"|"negative","topics":["short topic",...]}. Use at most 3 topics, each 2–3 words. Comment: "${comment.replace(/"/g, "'")}"`,
+            content: `Analyze the sentiment of this customer feedback comment. Be accurate - if the customer expresses disappointment, frustration, anger, complaints about service quality, damaged items, rudeness, or says they won't return, that is NEGATIVE sentiment. Only return "positive" if the feedback is genuinely happy. Return "neutral" only for factual comments with no clear emotion.
+
+Return ONLY a JSON object with no other text:
+{"sentiment":"positive"|"neutral"|"negative","topics":["topic1","topic2","topic3"]}
+
+Use at most 3 topics, each 2-3 words.
+
+Feedback to analyze: "${comment.replace(/"/g, "'")}"`,
           },
         ],
       }),
@@ -44,8 +50,10 @@ export async function POST(request: NextRequest) {
 
     const data = await res.json() as { content: Array<{ type: string; text: string }> };
     const text = data.content.find((c) => c.type === "text")?.text ?? "{}";
+    console.log("[sentiment] raw Claude response:", text);
 
     const parsed = JSON.parse(text) as { sentiment?: string; topics?: string[] };
+    console.log("[sentiment] parsed:", parsed);
     return NextResponse.json({
       sentiment: parsed.sentiment ?? "neutral",
       topics: Array.isArray(parsed.topics) ? parsed.topics.slice(0, 3) : [],
