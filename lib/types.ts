@@ -25,3 +25,12 @@ export interface Rider {
   name: string;
   phone: string;
 }
+
+export interface FeedbackEntry {
+  orderRating: number;
+  deliveryRating: number;
+  comments?: string;
+  submittedAt: number;
+  sentiment?: "positive" | "neutral" | "negative";
+  topics?: string[];
+}

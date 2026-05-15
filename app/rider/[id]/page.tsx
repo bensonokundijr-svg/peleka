@@ -100,6 +100,7 @@ export default function RiderTrackingPage() {
   const latestCoords = useRef<{ lat: number; lng: number } | null>(null);
   const wasDispatchedRef = useRef(false);
   const finalQueueSize = useRef(1);
+  const businessNameRef = useRef("");
 
   // ── Look up which business owns this rider ─────────────────────────────────
   useEffect(() => {
@@ -126,6 +127,7 @@ export default function RiderTrackingPage() {
         // New queue format
         queue?: QueueStop[];
         currentIndex?: number;
+        businessName?: string;
         // Old flat format (backward compat)
         deliveryId?: string;
         ownerUid?: string;
@@ -142,6 +144,7 @@ export default function RiderTrackingPage() {
         setOwnerUid(data.queue[0]?.ownerUid ?? null);
         setQueue(data.queue);
         setCurrentIndex(data.currentIndex ?? 0);
+        if (data.businessName) businessNameRef.current = data.businessName;
         setDeliveryStatus("dispatched");
       } else if (data?.deliveryId) {
         // Legacy single-stop flat format
@@ -226,6 +229,18 @@ export default function RiderTrackingPage() {
         update(ref(db, `deliveries/${currentStop.ownerUid}/${currentStop.deliveryId}`), { status: action }),
         set(ref(db, `deliveries-public/${currentStop.deliveryId}/status`), action),
       ]);
+
+      // Schedule feedback SMS 10 minutes after delivery
+      if (action === "delivered") {
+        set(ref(db, `feedback-queue/${currentStop.deliveryId}`), {
+          scheduledFor: Date.now() + 600_000,
+          ownerUid: currentStop.ownerUid,
+          customerPhone: currentStop.customerPhone,
+          customerName: currentStop.customerName,
+          businessName: businessNameRef.current || "Peleka",
+          deliveryId: currentStop.deliveryId,
+        }).catch(() => {});
+      }
 
       if (isLast) {
         finalQueueSize.current = queue.length;

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { db } from "@/lib/firebase";
 import { ref, push, set, update, remove, onValue, serverTimestamp } from "firebase/database";
 import { useAuth } from "@/lib/auth-context";
-import type { Delivery, DeliveryStatus, Rider } from "@/lib/types";
+import type { Delivery, DeliveryStatus, FeedbackEntry, Rider } from "@/lib/types";
 import mapboxgl from "mapbox-gl";
 
 // ─── Period filter ────────────────────────────────────────────────────────────
@@ -570,7 +570,7 @@ function UnassignedSection({
         }),
       ]))
     );
-    await set(ref(db, `rider-active/${rider.id}`), { queue, currentIndex: 0 });
+    await set(ref(db, `rider-active/${rider.id}`), { queue, currentIndex: 0, businessName: businessName || "Peleka" });
 
     fetch("/api/send-sms", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -715,6 +715,7 @@ function AssignedSection({
             ...(d.lng != null ? { lng: d.lng } : {}),
           }],
           currentIndex: 0,
+          businessName: businessName || "Peleka",
         });
       }
       // Customer SMS
@@ -818,6 +819,15 @@ function DispatchedSection({
       await update(ref(db, `deliveries/${uid}/${d.id}`), { status: "delivered", deliveredAt: Date.now() });
       await update(ref(db, `deliveries-public/${d.id}`), { status: "delivered" });
       if (d.riderId) await remove(ref(db, `rider-active/${d.riderId}`));
+      // Schedule feedback SMS
+      set(ref(db, `feedback-queue/${d.id}`), {
+        scheduledFor: Date.now() + 600_000,
+        ownerUid: uid,
+        customerPhone: d.customerPhone,
+        customerName: d.customerName,
+        businessName,
+        deliveryId: d.id,
+      }).catch(() => {});
     } finally {
       setMarking(null);
     }
@@ -924,8 +934,9 @@ function DispatchedSection({
 
 // ─── DELIVERED section ────────────────────────────────────────────────────────
 
-function DeliveredSection({ deliveries }: { deliveries: Delivery[] }) {
+function DeliveredSection({ deliveries, uid }: { deliveries: Delivery[]; uid: string }) {
   const [period, setPeriod] = useState<Period>("today");
+  const [copiedFeedback, setCopiedFeedback] = useState<string | null>(null);
   const filtered = deliveries.filter((d) => inPeriod(d.deliveredAt ?? d.createdAt, period));
 
   return (
@@ -955,6 +966,33 @@ function DeliveredSection({ deliveries }: { deliveries: Delivery[] }) {
                   Dispatched {fmtDateTime(d.dispatchedAt)} → Delivered {fmtDateTime(d.deliveredAt)}
                 </p>
               )}
+              <div className="flex justify-end pt-1.5 border-t border-gray-100 mt-1">
+                <button
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(`${window.location.origin}/feedback/${d.id}`);
+                    setCopiedFeedback(d.id);
+                    setTimeout(() => setCopiedFeedback(null), 2000);
+                  }}
+                  className={`text-xs flex items-center gap-1 transition-colors
+                    ${copiedFeedback === d.id ? "text-green-600" : "text-gray-400 hover:text-blue-600"}`}
+                >
+                  {copiedFeedback === d.id ? (
+                    <>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                      </svg>
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+                      </svg>
+                      Copy feedback link
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -1003,6 +1041,129 @@ function FailedSection({ deliveries }: { deliveries: Delivery[] }) {
         </div>
       )}
     </Section>
+  );
+}
+
+// ─── Feedback tab ────────────────────────────────────────────────────────────
+
+interface FeedbackWithId extends FeedbackEntry {
+  deliveryId: string;
+}
+
+const SENTIMENT_STYLES: Record<NonNullable<FeedbackEntry["sentiment"]>, string> = {
+  positive: "bg-green-100 text-green-700",
+  neutral:  "bg-gray-100 text-gray-600",
+  negative: "bg-red-100 text-red-700",
+};
+
+function StarRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-xs text-gray-500 w-14 shrink-0">{label}</span>
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <svg
+            key={n}
+            className={`w-3.5 h-3.5 ${n <= value ? "text-amber-400" : "text-gray-200"}`}
+            fill="currentColor" viewBox="0 0 20 20"
+          >
+            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z" />
+          </svg>
+        ))}
+      </div>
+      <span className="text-xs font-medium text-gray-700">{value}/5</span>
+    </div>
+  );
+}
+
+function FeedbackTab({ uid }: { uid: string }) {
+  const [entries, setEntries] = useState<FeedbackWithId[]>([]);
+  const [loadingFb, setLoadingFb] = useState(true);
+
+  useEffect(() => {
+    return onValue(ref(db, `businesses/${uid}/feedback`), (snap) => {
+      const data = snap.val() as Record<string, FeedbackEntry> | null;
+      setEntries(
+        data
+          ? Object.entries(data)
+              .map(([deliveryId, v]) => ({ deliveryId, ...v }))
+              .sort((a, b) => b.submittedAt - a.submittedAt)
+          : []
+      );
+      setLoadingFb(false);
+    });
+  }, [uid]);
+
+  if (loadingFb) {
+    return (
+      <div className="flex justify-center py-12">
+        <div className="w-5 h-5 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-16 text-center">
+        <p className="text-sm text-gray-500">No feedback yet</p>
+        <p className="text-xs text-gray-400">Feedback is collected automatically 10 minutes after each delivery.</p>
+      </div>
+    );
+  }
+
+  const avgOrder    = entries.reduce((s, e) => s + e.orderRating, 0) / entries.length;
+  const avgDelivery = entries.reduce((s, e) => s + e.deliveryRating, 0) / entries.length;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex gap-3">
+        <div className="flex-1 rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-center">
+          <p className="text-xs text-gray-500 mb-1">Avg Order Rating</p>
+          <p className="text-3xl font-bold text-gray-900">{avgOrder.toFixed(1)}</p>
+          <p className="text-xs text-gray-400 mt-0.5">out of 5</p>
+        </div>
+        <div className="flex-1 rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-center">
+          <p className="text-xs text-gray-500 mb-1">Avg Delivery Rating</p>
+          <p className="text-3xl font-bold text-gray-900">{avgDelivery.toFixed(1)}</p>
+          <p className="text-xs text-gray-400 mt-0.5">out of 5</p>
+        </div>
+        <div className="flex-1 rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-center">
+          <p className="text-xs text-gray-500 mb-1">Total Responses</p>
+          <p className="text-3xl font-bold text-gray-900">{entries.length}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {entries.slice(0, 30).map((entry) => (
+          <div key={entry.deliveryId} className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2 shadow-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <StarRow label="Order" value={entry.orderRating} />
+                <StarRow label="Delivery" value={entry.deliveryRating} />
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                {entry.sentiment && (
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${SENTIMENT_STYLES[entry.sentiment]}`}>
+                    {entry.sentiment}
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">{fmtDate(entry.submittedAt)}</span>
+              </div>
+            </div>
+            {entry.comments && (
+              <p className="text-sm text-gray-700 leading-snug border-t border-gray-100 pt-2">{entry.comments}</p>
+            )}
+            {entry.topics && entry.topics.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {entry.topics.map((t) => (
+                  <span key={t} className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{t}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1398,6 +1559,7 @@ export default function DashboardPage() {
   const [activePanel, setActivePanel] = useState<Delivery | null>(null);
   const [deliveredPeriod, setDeliveredPeriod] = useState<Period>("today");
   const [cancelledPeriod, setCancelledPeriod] = useState<Period>("today");
+  const [activeTab, setActiveTab] = useState<"deliveries" | "feedback">("deliveries");
 
   useEffect(() => {
     if (!user) return;
@@ -1513,95 +1675,117 @@ export default function DashboardPage() {
 
         {!loading && (
           <>
-            {/* ── Active Right Now ── */}
-            <section className="flex flex-col gap-3">
-              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
-                Active Right Now
-                <span className="flex items-center gap-1 text-xs font-normal text-amber-600 normal-case">
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                  {dispatched.length} live
-                </span>
-              </h2>
+            {/* ── Tab switcher ── */}
+            <div className="flex border-b border-gray-200 -mb-3">
+              {(["deliveries", "feedback"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px
+                    ${activeTab === tab
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                >
+                  {tab === "deliveries" ? "Deliveries" : "Feedback"}
+                </button>
+              ))}
+            </div>
 
-              {dispatched.length === 0 ? (
-                <p className="text-sm text-gray-400 py-4 text-center">No active deliveries right now</p>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {dispatched.slice(0, PAGE_SIZE).map((d) => (
-                      <button
-                        key={d.id}
-                        onClick={() => setActivePanel(d)}
-                        className="bg-white rounded-xl border border-amber-200 p-4 flex flex-col gap-2 shadow-sm text-left hover:border-amber-400 hover:shadow-md transition-all"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-semibold text-gray-900 text-sm leading-tight truncate">{d.customerName}</p>
-                          <StatusBadge status="dispatched" />
-                        </div>
-                        <p className="text-xs text-gray-500 leading-snug">{d.deliveryAddress}</p>
-                        {d.riderName && (
-                          <p className="text-xs text-gray-600 flex items-center gap-1">
-                            <svg className="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                            </svg>
-                            {d.riderName}
-                          </p>
-                        )}
-                        {d.dispatchedAt && (
-                          <p className="text-xs text-gray-400">Dispatched {fmtDateTime(d.dispatchedAt)}</p>
-                        )}
-                        <p className="text-xs text-blue-600 font-medium mt-0.5">Tap to view live map →</p>
-                      </button>
-                    ))}
-                  </div>
-                  {dispatched.length > PAGE_SIZE && (
-                    <p className="text-xs text-gray-400 text-center">
-                      +{dispatched.length - PAGE_SIZE} more — see Dispatched section below
-                    </p>
+            {activeTab === "feedback" && <FeedbackTab uid={uid} />}
+
+            {activeTab === "deliveries" && (
+              <>
+                {/* ── Active Right Now ── */}
+                <section className="flex flex-col gap-3">
+                  <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
+                    Active Right Now
+                    <span className="flex items-center gap-1 text-xs font-normal text-amber-600 normal-case">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      {dispatched.length} live
+                    </span>
+                  </h2>
+
+                  {dispatched.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-4 text-center">No active deliveries right now</p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {dispatched.slice(0, PAGE_SIZE).map((d) => (
+                          <button
+                            key={d.id}
+                            onClick={() => setActivePanel(d)}
+                            className="bg-white rounded-xl border border-amber-200 p-4 flex flex-col gap-2 shadow-sm text-left hover:border-amber-400 hover:shadow-md transition-all"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-semibold text-gray-900 text-sm leading-tight truncate">{d.customerName}</p>
+                              <StatusBadge status="dispatched" />
+                            </div>
+                            <p className="text-xs text-gray-500 leading-snug">{d.deliveryAddress}</p>
+                            {d.riderName && (
+                              <p className="text-xs text-gray-600 flex items-center gap-1">
+                                <svg className="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                                </svg>
+                                {d.riderName}
+                              </p>
+                            )}
+                            {d.dispatchedAt && (
+                              <p className="text-xs text-gray-400">Dispatched {fmtDateTime(d.dispatchedAt)}</p>
+                            )}
+                            <p className="text-xs text-blue-600 font-medium mt-0.5">Tap to view live map →</p>
+                          </button>
+                        ))}
+                      </div>
+                      {dispatched.length > PAGE_SIZE && (
+                        <p className="text-xs text-gray-400 text-center">
+                          +{dispatched.length - PAGE_SIZE} more — see Dispatched section below
+                        </p>
+                      )}
+                    </>
                   )}
-                </>
-              )}
 
-              {/* This month summary */}
-              <div className="flex items-center gap-6 bg-white rounded-xl border border-gray-200 px-5 py-3 shadow-sm mt-1">
-                <div>
-                  <p className="text-xs text-gray-500">This Month — Total</p>
-                  <p className="text-lg font-bold text-gray-900">{thisMonthTotal}</p>
-                </div>
-                <div className="w-px h-8 bg-gray-100" />
-                <div>
-                  <p className="text-xs text-gray-500">Delivered</p>
-                  <p className="text-lg font-bold text-green-600">{thisMonthDelivered}</p>
-                </div>
-                <div className="w-px h-8 bg-gray-100" />
-                <div>
-                  <p className="text-xs text-gray-500">Failed</p>
-                  <p className="text-lg font-bold text-red-500">{thisMonthFailed}</p>
-                </div>
-                <div className="w-px h-8 bg-gray-100" />
-                <div>
-                  <p className="text-xs text-gray-500">Pending</p>
-                  <p className="text-lg font-bold text-amber-600">
-                    {unassigned.length + assigned.length + dispatched.length}
-                  </p>
-                </div>
-              </div>
-            </section>
+                  {/* This month summary */}
+                  <div className="flex items-center gap-6 bg-white rounded-xl border border-gray-200 px-5 py-3 shadow-sm mt-1">
+                    <div>
+                      <p className="text-xs text-gray-500">This Month — Total</p>
+                      <p className="text-lg font-bold text-gray-900">{thisMonthTotal}</p>
+                    </div>
+                    <div className="w-px h-8 bg-gray-100" />
+                    <div>
+                      <p className="text-xs text-gray-500">Delivered</p>
+                      <p className="text-lg font-bold text-green-600">{thisMonthDelivered}</p>
+                    </div>
+                    <div className="w-px h-8 bg-gray-100" />
+                    <div>
+                      <p className="text-xs text-gray-500">Failed</p>
+                      <p className="text-lg font-bold text-red-500">{thisMonthFailed}</p>
+                    </div>
+                    <div className="w-px h-8 bg-gray-100" />
+                    <div>
+                      <p className="text-xs text-gray-500">Pending</p>
+                      <p className="text-lg font-bold text-amber-600">
+                        {unassigned.length + assigned.length + dispatched.length}
+                      </p>
+                    </div>
+                  </div>
+                </section>
 
-            {/* ── Five management sections ── */}
-            <UnassignedSection
-              deliveries={unassigned} uid={uid}
-              businessName={businessName}
-            />
-            <AssignedSection
-              deliveries={assigned} uid={uid} businessName={businessName}
-            />
-            <DispatchedSection
-              deliveries={dispatched} uid={uid}
-              businessName={businessName} businessPhone={businessPhone}
-            />
-            <DeliveredSection deliveries={delivered} />
-            <FailedSection deliveries={failed} />
+                {/* ── Five management sections ── */}
+                <UnassignedSection
+                  deliveries={unassigned} uid={uid}
+                  businessName={businessName}
+                />
+                <AssignedSection
+                  deliveries={assigned} uid={uid} businessName={businessName}
+                />
+                <DispatchedSection
+                  deliveries={dispatched} uid={uid}
+                  businessName={businessName} businessPhone={businessPhone}
+                />
+                <DeliveredSection deliveries={delivered} uid={uid} />
+                <FailedSection deliveries={failed} />
+              </>
+            )}
           </>
         )}
       </main>
