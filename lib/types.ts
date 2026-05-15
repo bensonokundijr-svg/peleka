@@ -13,6 +13,11 @@ export interface Delivery {
   riderPhone?: string;
   lat?: number;
   lng?: number;
+  queuePosition?: number;
+  queueSize?: number;
+  dispatchedAt?: number;
+  deliveredAt?: number;
+  failureReason?: string;
 }
 
 export interface Rider {

@@ -23,6 +23,7 @@ export default function SettingsPage() {
 
   const [businessName, setBusinessName] = useState("");
   const [phone, setPhone] = useState("");
+  const [showQueuePosition, setShowQueuePosition] = useState(false);
   const [logoUrl, setLogoUrl] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export default function SettingsPage() {
           setBusinessName(data.businessName ?? "");
           setPhone(data.phone ?? "");
           setLogoUrl(data.logoUrl ?? "");
+          setShowQueuePosition(data.showQueuePosition ?? false);
         }
         setLoadingProfile(false);
       })
@@ -109,6 +111,7 @@ export default function SettingsPage() {
       await update(dbRef(db, `businesses/${user.uid}/profile`), {
         businessName: businessName.trim(),
         phone: phone.trim(),
+        showQueuePosition,
         ...(finalLogoUrl ? { logoUrl: finalLogoUrl } : {}),
       });
 
@@ -121,6 +124,7 @@ export default function SettingsPage() {
         setLogoUrl(finalLogoUrl);
         setLogoFile(null);
         setLogoPreview(null);
+        setShowQueuePosition(showQueuePosition);
         setSaving(false);
         setSuccess(true);
         if (logoWarning) setError(logoWarning);
@@ -247,6 +251,29 @@ export default function SettingsPage() {
               placeholder="+254 700 000 000"
               className={INPUT}
             />
+          </div>
+
+          {/* Queue position toggle */}
+          <div className="flex items-start justify-between gap-4 pt-1">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Show queue position to customers</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                If on, customers see how many stops are ahead of theirs on the tracking page.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showQueuePosition}
+              onClick={() => setShowQueuePosition((v) => !v)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
+                ${showQueuePosition ? "bg-blue-600" : "bg-gray-200"}`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform duration-200
+                  ${showQueuePosition ? "translate-x-5" : "translate-x-0"}`}
+              />
+            </button>
           </div>
 
           {error && (

@@ -207,7 +207,17 @@ function CallBusinessButton({ businessName, businessPhone }: { businessName: str
 
 // ─── Dispatched view: full-screen map + bottom sheet ─────────────────────────
 
-function DispatchedView({ delivery, businessName, businessPhone }: { delivery: Delivery; businessName: string; businessPhone: string }) {
+function DispatchedView({
+  delivery,
+  businessName,
+  businessPhone,
+  stopsAhead,
+}: {
+  delivery: Delivery;
+  businessName: string;
+  businessPhone: string;
+  stopsAhead: number | null;
+}) {
   return (
     <div className="relative h-screen w-full overflow-hidden">
       {/* Map fills the screen */}
@@ -221,13 +231,23 @@ function DispatchedView({ delivery, businessName, businessPhone }: { delivery: D
         <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
 
         {/* Live indicator + heading */}
-        <div className="flex items-center gap-2.5 mb-4">
+        <div className="flex items-center gap-2.5 mb-1">
           <div className="relative">
             <div className="w-3 h-3 rounded-full bg-blue-600" />
             <div className="absolute inset-0 rounded-full bg-blue-600 animate-ping opacity-50" />
           </div>
           <p className="text-base font-bold text-gray-900">Your delivery is on the way</p>
         </div>
+
+        {/* Queue position — only shown when the business has it enabled and this is a multi-stop batch */}
+        {stopsAhead !== null && (
+          <p className={`text-sm mb-3 ml-[22px] ${stopsAhead > 0 ? "text-gray-500" : "text-blue-600 font-medium"}`}>
+            {stopsAhead > 0
+              ? `${stopsAhead} stop${stopsAhead === 1 ? "" : "s"} before yours`
+              : "Your delivery is next!"}
+          </p>
+        )}
+        {stopsAhead === null && <div className="mb-3" />}
 
         {/* Progress steps */}
         <div className="mb-4">
@@ -337,6 +357,8 @@ export default function TrackPage() {
   const [delivery, setDelivery] = useState<Delivery | null | "not_found" | "timed_out">(null);
   const [businessName, setBusinessName] = useState("");
   const [businessPhone, setBusinessPhone] = useState("");
+  const [showQueuePosition, setShowQueuePosition] = useState(false);
+  const [riderCurrentIndex, setRiderCurrentIndex] = useState<number>(0);
 
   // Show an error after 10 s if the delivery still hasn't loaded
   useEffect(() => {
@@ -364,15 +386,27 @@ export default function TrackPage() {
     });
   }, [id]);
 
-  // Load business profile for the call button once ownerUid is known
+  // Load business profile for the call button + queue setting once ownerUid is known
   useEffect(() => {
     if (!ownerUid) return;
     return onValue(ref(db, `businesses/${ownerUid}/profile`), (snap) => {
       const data = snap.val();
       setBusinessName(data?.businessName ?? "");
       setBusinessPhone(data?.phone ?? "");
+      setShowQueuePosition(data?.showQueuePosition ?? false);
     });
   }, [ownerUid]);
+
+  // Subscribe to rider's current queue index for queue-position display
+  useEffect(() => {
+    if (!showQueuePosition) return;
+    if (typeof delivery !== "object" || !delivery) return;
+    if (delivery.status !== "dispatched" || !delivery.riderId) return;
+    return onValue(ref(db, `rider-active/${delivery.riderId}`), (snap) => {
+      const data = snap.val();
+      setRiderCurrentIndex(data?.currentIndex ?? 0);
+    });
+  }, [delivery, showQueuePosition]);
 
   // Loading
   if (delivery === null) {
@@ -421,7 +455,21 @@ export default function TrackPage() {
 
   // Dispatched — full-screen map
   if (delivery.status === "dispatched") {
-    return <DispatchedView delivery={delivery} businessName={businessName} businessPhone={businessPhone} />;
+    const stopsAhead =
+      showQueuePosition &&
+      delivery.queueSize != null &&
+      delivery.queueSize > 1 &&
+      delivery.queuePosition != null
+        ? delivery.queuePosition - riderCurrentIndex
+        : null;
+    return (
+      <DispatchedView
+        delivery={delivery}
+        businessName={businessName}
+        businessPhone={businessPhone}
+        stopsAhead={stopsAhead}
+      />
+    );
   }
 
   // Delivered — success screen

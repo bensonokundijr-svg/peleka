@@ -10,8 +10,8 @@ type DeliveryWatchStatus = "checking" | "dispatched" | "waiting" | "completed";
 type GpsStatus = "idle" | "requesting" | "active" | "denied" | "error";
 type ActionResult = "delivered" | "failed" | null;
 
-interface ActiveDelivery {
-  id: string;
+interface QueueStop {
+  deliveryId: string;
   ownerUid: string;
   customerName: string;
   customerPhone: string;
@@ -47,14 +47,10 @@ function RiderMap({
     mapRef.current = map;
 
     map.on("load", () => {
-      // Blue pulsing dot for rider
       const el = document.createElement("div");
       Object.assign(el.style, {
-        width: "14px",
-        height: "14px",
-        borderRadius: "50%",
-        background: "#60a5fa",
-        border: "2px solid white",
+        width: "14px", height: "14px", borderRadius: "50%",
+        background: "#60a5fa", border: "2px solid white",
         boxShadow: "0 0 0 5px rgba(96,165,250,0.35)",
       });
       markerRef.current = new mapboxgl.Marker({ element: el })
@@ -73,24 +69,16 @@ function RiderMap({
       }
     });
 
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
+    return () => { map.remove(); mapRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update rider dot as GPS position changes
   useEffect(() => {
     markerRef.current?.setLngLat([riderCoords.lng, riderCoords.lat]);
   }, [riderCoords]);
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full rounded-xl overflow-hidden"
-      style={{ height: 220 }}
-    />
+    <div ref={containerRef} className="w-full rounded-xl overflow-hidden" style={{ height: 220 }} />
   );
 }
 
@@ -100,17 +88,20 @@ export default function RiderTrackingPage() {
   const [ownerUid, setOwnerUid] = useState<string | null>(null);
   const [riderName, setRiderName] = useState<string | null>(null);
   const [deliveryStatus, setDeliveryStatus] = useState<DeliveryWatchStatus>("checking");
-  const [activeDelivery, setActiveDelivery] = useState<ActiveDelivery | null>(null);
+  const [queue, setQueue] = useState<QueueStop[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [actionResult, setActionResult] = useState<ActionResult>(null);
+  const [showFailedDialog, setShowFailedDialog] = useState(false);
 
   const watchRef = useRef<number | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const latestCoords = useRef<{ lat: number; lng: number } | null>(null);
   const wasDispatchedRef = useRef(false);
+  const finalQueueSize = useRef(1);
 
-  // ── Look up which business owns this rider ───────────────────────────────────
+  // ── Look up which business owns this rider ─────────────────────────────────
   useEffect(() => {
     if (!id) return;
     get(ref(db, `rider-index/${id}`)).then((snap) => {
@@ -119,7 +110,7 @@ export default function RiderTrackingPage() {
     });
   }, [id]);
 
-  // ── Load rider name ──────────────────────────────────────────────────────────
+  // ── Load rider name ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!id || !ownerUid) return;
     return onValue(ref(db, `riders-list/${ownerUid}/${id}`), (snap) => {
@@ -127,15 +118,17 @@ export default function RiderTrackingPage() {
     });
   }, [id, ownerUid]);
 
-  // ── Watch rider-active for the current dispatched delivery ──────────────────
-  // This node is publicly readable (no auth needed) and is written by the
-  // dashboard on dispatch, cleared when the rider marks delivered/failed.
+  // ── Watch rider-active for the dispatched queue ────────────────────────────
   useEffect(() => {
     if (!id) return;
     return onValue(ref(db, `rider-active/${id}`), (snap) => {
       const data = snap.val() as {
-        deliveryId: string;
-        ownerUid: string;
+        // New queue format
+        queue?: QueueStop[];
+        currentIndex?: number;
+        // Old flat format (backward compat)
+        deliveryId?: string;
+        ownerUid?: string;
         customerName?: string;
         customerPhone?: string;
         deliveryAddress?: string;
@@ -144,32 +137,41 @@ export default function RiderTrackingPage() {
         lng?: number;
       } | null;
 
-      if (data) {
+      if (data?.queue) {
         wasDispatchedRef.current = true;
-        // Also update ownerUid state so rider-name subscription refreshes if needed
-        setOwnerUid(data.ownerUid);
-        setActiveDelivery({
-          id: data.deliveryId,
-          ownerUid: data.ownerUid,
+        setOwnerUid(data.queue[0]?.ownerUid ?? null);
+        setQueue(data.queue);
+        setCurrentIndex(data.currentIndex ?? 0);
+        setDeliveryStatus("dispatched");
+      } else if (data?.deliveryId) {
+        // Legacy single-stop flat format
+        wasDispatchedRef.current = true;
+        setOwnerUid(data.ownerUid ?? null);
+        setQueue([{
+          deliveryId: data.deliveryId,
+          ownerUid: data.ownerUid ?? "",
           customerName: data.customerName ?? "Customer",
           customerPhone: data.customerPhone ?? "",
           deliveryAddress: data.deliveryAddress ?? "",
           notes: data.notes ?? "",
           lat: data.lat,
           lng: data.lng,
-        });
+        }]);
+        setCurrentIndex(0);
         setDeliveryStatus("dispatched");
       } else if (wasDispatchedRef.current) {
-        setActiveDelivery(null);
+        setQueue([]);
+        setCurrentIndex(0);
         setDeliveryStatus("completed");
       } else {
-        setActiveDelivery(null);
+        setQueue([]);
+        setCurrentIndex(0);
         setDeliveryStatus("waiting");
       }
     });
   }, [id]);
 
-  // ── GPS lifecycle ────────────────────────────────────────────────────────────
+  // ── GPS lifecycle ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (deliveryStatus === "completed") {
       remove(ref(db, `riders/${id}/location`)).catch(console.error);
@@ -177,16 +179,10 @@ export default function RiderTrackingPage() {
       setCoords(null);
       return;
     }
-
     if (deliveryStatus !== "dispatched") return;
-
-    if (!navigator.geolocation) {
-      setGpsStatus("error");
-      return;
-    }
+    if (!navigator.geolocation) { setGpsStatus("error"); return; }
 
     setGpsStatus("requesting");
-
     watchRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -195,7 +191,7 @@ export default function RiderTrackingPage() {
         setGpsStatus("active");
       },
       () => setGpsStatus("denied"),
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: true },
     );
 
     intervalRef.current = setInterval(() => {
@@ -217,30 +213,44 @@ export default function RiderTrackingPage() {
     };
   }, [deliveryStatus, id]);
 
-  // ── Action handler ───────────────────────────────────────────────────────────
+  // ── Action handler ─────────────────────────────────────────────────────────
   async function handleAction(action: "delivered" | "failed") {
-    if (!activeDelivery) return;
-    setActionResult(action); // show confirmation immediately
+    const currentStop = queue[currentIndex];
+    if (!currentStop) return;
+    setShowFailedDialog(false);
+
+    const isLast = currentIndex >= queue.length - 1;
+
     try {
       await Promise.all([
-        update(ref(db, `deliveries/${activeDelivery.ownerUid}/${activeDelivery.id}`), { status: action }),
-        set(ref(db, `deliveries-public/${activeDelivery.id}/status`), action),
-        remove(ref(db, `rider-active/${id}`)),
+        update(ref(db, `deliveries/${currentStop.ownerUid}/${currentStop.deliveryId}`), { status: action }),
+        set(ref(db, `deliveries-public/${currentStop.deliveryId}/status`), action),
       ]);
+
+      if (isLast) {
+        finalQueueSize.current = queue.length;
+        await remove(ref(db, `rider-active/${id}`));
+        setActionResult(action);
+      } else {
+        // Advance to next stop — onValue fires and updates queue/currentIndex
+        await update(ref(db, `rider-active/${id}`), { currentIndex: currentIndex + 1 });
+      }
     } catch (err) {
       console.error("Failed to update delivery:", err);
     }
   }
 
+  const currentStop = queue[currentIndex] ?? null;
+
   function getNavigateUrl(): string {
-    if (!activeDelivery) return "#";
-    if (activeDelivery.lat != null && activeDelivery.lng != null) {
-      return `https://www.google.com/maps/dir/?api=1&destination=${activeDelivery.lat},${activeDelivery.lng}`;
+    if (!currentStop) return "#";
+    if (currentStop.lat != null && currentStop.lng != null) {
+      return `https://www.google.com/maps/dir/?api=1&destination=${currentStop.lat},${currentStop.lng}`;
     }
-    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activeDelivery.deliveryAddress)}`;
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(currentStop.deliveryAddress)}`;
   }
 
-  // ── UI ───────────────────────────────────────────────────────────────────────
+  // ── UI ─────────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-gray-950 text-white flex flex-col">
 
@@ -255,21 +265,16 @@ export default function RiderTrackingPage() {
           <span className="text-sm font-bold">Peleka</span>
         </div>
 
-        {/* GPS status pill */}
         {deliveryStatus === "dispatched" && actionResult === null && (
           <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full ${
-            gpsStatus === "active"
-              ? "bg-green-900/60 text-green-400"
-              : gpsStatus === "requesting"
-              ? "bg-yellow-900/60 text-yellow-400"
-              : "bg-red-900/60 text-red-400"
+            gpsStatus === "active" ? "bg-green-900/60 text-green-400"
+            : gpsStatus === "requesting" ? "bg-yellow-900/60 text-yellow-400"
+            : "bg-red-900/60 text-red-400"
           }`}>
             <div className={`w-1.5 h-1.5 rounded-full ${
-              gpsStatus === "active"
-                ? "bg-green-400 animate-pulse"
-                : gpsStatus === "requesting"
-                ? "bg-yellow-400 animate-pulse"
-                : "bg-red-400"
+              gpsStatus === "active" ? "bg-green-400 animate-pulse"
+              : gpsStatus === "requesting" ? "bg-yellow-400 animate-pulse"
+              : "bg-red-400"
             }`} />
             {gpsStatus === "active" ? "GPS active" : gpsStatus === "requesting" ? "Getting GPS…" : "GPS off"}
           </div>
@@ -283,7 +288,7 @@ export default function RiderTrackingPage() {
         </div>
       )}
 
-      {/* ── Confirmation after rider action ── */}
+      {/* ── Final action confirmation ── */}
       {actionResult !== null && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 text-center space-y-4">
           <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
@@ -300,13 +305,11 @@ export default function RiderTrackingPage() {
             )}
           </div>
           <p className="text-2xl font-bold">
-            {actionResult === "delivered" ? "Delivered!" : "Delivery failed"}
+            {actionResult === "delivered"
+              ? (finalQueueSize.current > 1 ? "All done!" : "Delivered!")
+              : "Delivery failed"}
           </p>
-          {riderName && (
-            <p className="text-gray-400 text-sm">
-              <span className="text-white font-semibold">{riderName}</span>
-            </p>
-          )}
+          {riderName && <p className="text-gray-400 text-sm"><span className="text-white font-semibold">{riderName}</span></p>}
           <p className="text-gray-500 text-sm">Tracking stopped — waiting for next assignment</p>
         </div>
       )}
@@ -330,22 +333,43 @@ export default function RiderTrackingPage() {
       )}
 
       {/* ── Active dispatched delivery ── */}
-      {actionResult === null && deliveryStatus === "dispatched" && activeDelivery && (
+      {actionResult === null && deliveryStatus === "dispatched" && currentStop && (
         <div className="flex-1 flex flex-col gap-4 px-4 pb-8 overflow-y-auto">
 
-          {/* Map (only when GPS is active and we have a position) */}
+          {/* Queue progress — only shown for multi-stop batches */}
+          {queue.length > 1 && (
+            <div className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3">
+              <span className="text-sm font-semibold text-white">
+                Stop {currentIndex + 1} of {queue.length}
+              </span>
+              <div className="flex items-center gap-1.5">
+                {queue.map((_, i) => (
+                  <div
+                    key={i}
+                    className={`rounded-full transition-all ${
+                      i < currentIndex ? "w-2 h-2 bg-green-400"
+                      : i === currentIndex ? "w-3 h-3 bg-blue-400"
+                      : "w-2 h-2 bg-gray-600"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Map */}
           {gpsStatus === "active" && coords && (
             <RiderMap
               riderCoords={coords}
               destination={
-                activeDelivery.lat != null && activeDelivery.lng != null
-                  ? { lat: activeDelivery.lat, lng: activeDelivery.lng }
+                currentStop.lat != null && currentStop.lng != null
+                  ? { lat: currentStop.lat, lng: currentStop.lng }
                   : undefined
               }
             />
           )}
 
-          {/* GPS denied / unsupported notice */}
+          {/* GPS denied / unsupported */}
           {(gpsStatus === "denied" || gpsStatus === "error") && (
             <div className="bg-red-950 border border-red-800 rounded-xl px-4 py-3 text-sm text-red-300">
               {gpsStatus === "denied"
@@ -354,25 +378,25 @@ export default function RiderTrackingPage() {
             </div>
           )}
 
-          {/* Delivery details card */}
+          {/* Delivery details */}
           <div className="bg-gray-900 rounded-xl px-4 py-4 space-y-3">
             <div>
               <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Customer</p>
-              <p className="text-white font-semibold text-lg leading-tight">{activeDelivery.customerName}</p>
+              <p className="text-white font-semibold text-lg leading-tight">{currentStop.customerName}</p>
             </div>
             <div>
               <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Address</p>
-              <p className="text-gray-200 text-base leading-snug">{activeDelivery.deliveryAddress}</p>
+              <p className="text-gray-200 text-base leading-snug">{currentStop.deliveryAddress}</p>
             </div>
-            {activeDelivery.notes && (
+            {currentStop.notes && (
               <div>
                 <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Notes</p>
-                <p className="text-gray-300 text-sm leading-snug">{activeDelivery.notes}</p>
+                <p className="text-gray-300 text-sm leading-snug">{currentStop.notes}</p>
               </div>
             )}
           </div>
 
-          {/* Navigate button */}
+          {/* Navigate */}
           <a
             href={getNavigateUrl()}
             target="_blank"
@@ -380,21 +404,21 @@ export default function RiderTrackingPage() {
             className="flex items-center justify-center gap-2.5 w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-lg transition-colors"
           >
             <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.159.69.159 1.006 0Z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.159.69.159 1.006 0Z" />
             </svg>
             Navigate with Google Maps
           </a>
 
-          {/* Call customer button */}
-          {activeDelivery.customerPhone && (
+          {/* Call customer */}
+          {currentStop.customerPhone && (
             <a
-              href={`tel:${activeDelivery.customerPhone}`}
+              href={`tel:${currentStop.customerPhone}`}
               className="flex items-center justify-center gap-2.5 w-full py-4 rounded-xl bg-gray-800 hover:bg-gray-700 active:bg-gray-900 text-white font-bold text-lg transition-colors"
             >
               <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
               </svg>
-              Call {activeDelivery.customerName.split(" ")[0]}
+              Call {currentStop.customerName.split(" ")[0]}
             </a>
           )}
 
@@ -402,7 +426,7 @@ export default function RiderTrackingPage() {
           <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
-              onClick={() => handleAction("failed")}
+              onClick={() => setShowFailedDialog(true)}
               className="py-5 rounded-xl bg-red-700 hover:bg-red-600 active:bg-red-800 text-white font-bold text-base transition-colors"
             >
               Failed Delivery
@@ -418,7 +442,7 @@ export default function RiderTrackingPage() {
         </div>
       )}
 
-      {/* ── Completed externally (admin marked done, not the rider) ── */}
+      {/* ── Completed externally ── */}
       {actionResult === null && deliveryStatus === "completed" && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 text-center space-y-3">
           <div className="w-12 h-12 rounded-full bg-green-900 flex items-center justify-center">
@@ -427,12 +451,43 @@ export default function RiderTrackingPage() {
             </svg>
           </div>
           {riderName && (
-            <p className="text-gray-400 text-sm">
-              <span className="text-white font-semibold">{riderName}</span>
-            </p>
+            <p className="text-gray-400 text-sm"><span className="text-white font-semibold">{riderName}</span></p>
           )}
           <p className="text-lg font-semibold text-gray-200">Delivery complete</p>
           <p className="text-sm text-gray-500">Tracking stopped — waiting for next assignment</p>
+        </div>
+      )}
+
+      {/* ── Failed delivery confirmation sheet ── */}
+      {showFailedDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowFailedDialog(false); }}
+        >
+          <div className="w-full max-w-md bg-gray-900 rounded-t-2xl px-6 pt-6 pb-10 flex flex-col gap-4">
+            <p className="text-base font-semibold text-white">
+              {currentIndex < queue.length - 1 ? "Skip to next stop?" : "Mark as failed?"}
+            </p>
+            <p className="text-sm text-gray-400">
+              {currentIndex < queue.length - 1
+                ? "This stop will be marked as failed and you'll move to the next delivery."
+                : "This delivery will be marked as failed."}
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setShowFailedDialog(false)}
+                className="flex-1 py-3 rounded-xl border border-gray-700 text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleAction("failed")}
+                className="flex-1 py-3 rounded-xl bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors"
+              >
+                {currentIndex < queue.length - 1 ? "Skip to Next" : "Mark Failed"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>
