@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/lib/firebase";
-import { ref, push, set, update, remove, onValue, get, serverTimestamp } from "firebase/database";
+import { ref, push, set, update, remove, onValue, serverTimestamp } from "firebase/database";
 import { useAuth } from "@/lib/auth-context";
 import type { Delivery, DeliveryStatus, Rider } from "@/lib/types";
 import mapboxgl from "mapbox-gl";
@@ -509,9 +509,9 @@ function ActiveDeliveryPanel({
 // ─── UNASSIGNED section ───────────────────────────────────────────────────────
 
 function UnassignedSection({
-  deliveries, uid, businessName, businessPhone,
+  deliveries, uid, businessName,
 }: {
-  deliveries: Delivery[]; uid: string; businessName: string; businessPhone: string;
+  deliveries: Delivery[]; uid: string; businessName: string;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [singleAssign, setSingleAssign] = useState<Delivery | null>(null);
@@ -1556,7 +1556,7 @@ export default function DashboardPage() {
             {/* ── Five management sections ── */}
             <UnassignedSection
               deliveries={unassigned} uid={uid}
-              businessName={businessName} businessPhone={businessPhone}
+              businessName={businessName}
             />
             <AssignedSection
               deliveries={assigned} uid={uid} businessName={businessName}
