@@ -4,9 +4,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/lib/firebase";
-import { ref, push, set, update, remove, onValue, serverTimestamp } from "firebase/database";
+import { ref, push, set, update, remove, onValue, get, serverTimestamp } from "firebase/database";
 import { useAuth } from "@/lib/auth-context";
-import type { Delivery, DeliveryStatus, FeedbackEntry, Rider } from "@/lib/types";
+import type { Delivery, DeliveryStatus, FeedbackEntry, Rider, SavedCustomer } from "@/lib/types";
 import mapboxgl from "mapbox-gl";
 
 // ─── Period filter ────────────────────────────────────────────────────────────
@@ -827,6 +827,22 @@ function DispatchedSection({
         businessName,
         deliveryId: d.id,
       }).catch(() => {});
+
+      // Save / update customer record
+      const phoneKey = d.customerPhone.replace(/[^a-zA-Z0-9]/g, "");
+      if (phoneKey) {
+        const custRef = ref(db, `businesses/${uid}/customers/${phoneKey}`);
+        get(custRef).then((snap) => {
+          const existing = snap.val() as { totalDeliveries?: number } | null;
+          return set(custRef, {
+            customerName: d.customerName,
+            phone: d.customerPhone,
+            lastAddress: d.deliveryAddress,
+            totalDeliveries: (existing?.totalDeliveries ?? 0) + 1,
+            lastDeliveryDate: Date.now(),
+          });
+        }).catch(() => {});
+      }
     } finally {
       setMarking(null);
     }
@@ -1447,6 +1463,99 @@ function Field({ label, required, children }: {
   );
 }
 
+// ─── Customer search ──────────────────────────────────────────────────────────
+
+function CustomerSearch({
+  uid, onSelect,
+}: {
+  uid: string;
+  onSelect: (c: SavedCustomer) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [customers, setCustomers] = useState<SavedCustomer[]>([]);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return onValue(ref(db, `businesses/${uid}/customers`), (snap) => {
+      const data = snap.val() as Record<string, SavedCustomer> | null;
+      setCustomers(data ? Object.values(data) : []);
+    });
+  }, [uid]);
+
+  const filtered = query.length >= 2
+    ? customers
+        .filter((c) => {
+          const q = query.toLowerCase();
+          return c.customerName.toLowerCase().includes(q) || c.phone.includes(q);
+        })
+        .slice(0, 6)
+    : [];
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, []);
+
+  if (customers.length === 0) return null;
+
+  return (
+    <div ref={containerRef} className="relative flex flex-col gap-1.5">
+      <label className="text-sm font-medium text-gray-700">Search saved customer</label>
+      <input
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder="Name or phone number…"
+        autoComplete="off"
+        className={INPUT_CLASS}
+      />
+      {open && query.length >= 2 && (
+        <ul className="absolute z-20 left-0 right-0 top-full mt-1 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden">
+          {filtered.length > 0 ? (
+            <>
+              {filtered.map((c) => (
+                <li key={c.phone}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); onSelect(c); setQuery(""); setOpen(false); }}
+                    className="w-full text-left px-3 py-2.5 hover:bg-blue-50 flex flex-col gap-0.5"
+                  >
+                    <span className="text-sm font-medium text-gray-900">{c.customerName}</span>
+                    <span className="text-xs text-gray-500">{c.phone}{c.lastAddress ? ` · ${c.lastAddress}` : ""}</span>
+                  </button>
+                </li>
+              ))}
+              <li>
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); setQuery(""); setOpen(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-blue-600 hover:bg-blue-50 border-t border-gray-100"
+                >
+                  + New customer
+                </button>
+              </li>
+            </>
+          ) : (
+            <li>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); setQuery(""); setOpen(false); }}
+                className="w-full text-left px-3 py-2.5 text-sm text-gray-400"
+              >
+                No match — enter new customer below
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ─── Create delivery form ─────────────────────────────────────────────────────
 
 const EMPTY_FORM = { customerName: "", customerPhone: "", deliveryAddress: "", notes: "" };
@@ -1490,6 +1599,16 @@ function CreateForm() {
     }
   }
 
+  function handleSelectSavedCustomer(c: SavedCustomer) {
+    setFields((f) => ({
+      ...f,
+      customerName: c.customerName,
+      customerPhone: c.phone,
+      deliveryAddress: c.lastAddress,
+    }));
+    setAddressCoords(null);
+  }
+
   const canSubmit = fields.customerName.trim() && fields.customerPhone.trim() && fields.deliveryAddress.trim();
 
   return (
@@ -1510,6 +1629,7 @@ function CreateForm() {
       </button>
       {open && (
         <form onSubmit={handleSubmit} className="border-t border-gray-100 px-5 py-4 flex flex-col gap-4">
+          <CustomerSearch uid={uid} onSelect={handleSelectSavedCustomer} />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Customer name" required>
               <input ref={firstRef} name="customerName" value={fields.customerName} onChange={handleChange} placeholder="Jane Wanjiru" required />

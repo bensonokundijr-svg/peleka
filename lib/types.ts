@@ -26,6 +26,14 @@ export interface Rider {
   phone: string;
 }
 
+export interface SavedCustomer {
+  customerName: string;
+  phone: string;
+  lastAddress: string;
+  totalDeliveries: number;
+  lastDeliveryDate: number;
+}
+
 export interface FeedbackEntry {
   orderRating: number;
   deliveryRating: number;
