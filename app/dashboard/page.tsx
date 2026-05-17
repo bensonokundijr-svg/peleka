@@ -1466,15 +1466,16 @@ function Field({ label, required, children }: {
 // ─── Customer search ──────────────────────────────────────────────────────────
 
 function CustomerSearch({
-  uid, onSelect,
+  uid, value, onChange, onSelect, inputRef,
 }: {
   uid: string;
+  value: string;
+  onChange: (name: string) => void;
   onSelect: (c: SavedCustomer) => void;
+  inputRef?: React.RefObject<HTMLInputElement>;
 }) {
-  const [query, setQuery] = useState("");
   const [customers, setCustomers] = useState<SavedCustomer[]>([]);
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     return onValue(ref(db, `businesses/${uid}/customers`), (snap) => {
@@ -1483,77 +1484,41 @@ function CustomerSearch({
     });
   }, [uid]);
 
-  const filtered = query.length >= 2
-    ? customers
-        .filter((c) => {
-          const q = query.toLowerCase();
-          return c.customerName.toLowerCase().includes(q) || c.phone.includes(q);
-        })
-        .slice(0, 6)
+  const q = value.trim().toLowerCase();
+  const matches = !dismissed && q.length >= 2
+    ? customers.filter((c) =>
+        c.customerName.toLowerCase().includes(q) || c.phone.includes(q)
+      ).slice(0, 6)
     : [];
 
-  useEffect(() => {
-    function onOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onOutside);
-    return () => document.removeEventListener("mousedown", onOutside);
-  }, []);
-
-  const hasCustomers = customers.length > 0;
-
   return (
-    <div ref={containerRef} className="relative flex flex-col gap-1.5">
+    <div className="relative flex flex-col gap-1.5">
       <label className="text-sm font-medium text-gray-700">
-        Search saved customer
-        {!hasCustomers && <span className="ml-1 text-xs font-normal text-gray-400">(none saved yet)</span>}
+        Customer name <span className="sr-only">(required)</span>
       </label>
       <input
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => { if (hasCustomers) setOpen(true); }}
-        placeholder={hasCustomers ? "Name or phone number…" : "Customers appear here after deliveries"}
-        disabled={!hasCustomers}
+        ref={inputRef}
+        value={value}
+        onChange={(e) => { setDismissed(false); onChange(e.target.value); }}
+        placeholder="Jane Wanjiru"
+        required
         autoComplete="off"
-        className={`${INPUT_CLASS} ${!hasCustomers ? "opacity-50 cursor-not-allowed" : ""}`}
+        className={INPUT_CLASS}
       />
-      {open && query.length >= 2 && hasCustomers && (
+      {matches.length > 0 && (
         <ul className="absolute z-20 left-0 right-0 top-full mt-1 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden">
-          {filtered.length > 0 ? (
-            <>
-              {filtered.map((c) => (
-                <li key={c.phone}>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => { e.preventDefault(); onSelect(c); setQuery(""); setOpen(false); }}
-                    className="w-full text-left px-3 py-2.5 hover:bg-blue-50 flex flex-col gap-0.5"
-                  >
-                    <span className="text-sm font-medium text-gray-900">{c.customerName}</span>
-                    <span className="text-xs text-gray-500">{c.phone}{c.lastAddress ? ` · ${c.lastAddress}` : ""}</span>
-                  </button>
-                </li>
-              ))}
-              <li>
-                <button
-                  type="button"
-                  onMouseDown={(e) => { e.preventDefault(); setQuery(""); setOpen(false); }}
-                  className="w-full text-left px-3 py-2 text-xs text-blue-600 hover:bg-blue-50 border-t border-gray-100"
-                >
-                  + New customer
-                </button>
-              </li>
-            </>
-          ) : (
-            <li>
+          {matches.map((c) => (
+            <li key={c.phone}>
               <button
                 type="button"
-                onMouseDown={(e) => { e.preventDefault(); setQuery(""); setOpen(false); }}
-                className="w-full text-left px-3 py-2.5 text-sm text-gray-400"
+                onMouseDown={(e) => { e.preventDefault(); setDismissed(true); onSelect(c); }}
+                className="w-full text-left px-3 py-2.5 hover:bg-blue-50 flex flex-col gap-0.5"
               >
-                No match — enter new customer below
+                <span className="text-sm font-medium text-gray-900">{c.customerName}</span>
+                <span className="text-xs text-gray-500">{c.phone}</span>
               </button>
             </li>
-          )}
+          ))}
         </ul>
       )}
     </div>
@@ -1571,7 +1536,7 @@ function CreateForm() {
   const [fields, setFields] = useState(EMPTY_FORM);
   const [addressCoords, setAddressCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const firstRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setFields((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -1597,20 +1562,10 @@ function CreateForm() {
         });
       }
       setFields(EMPTY_FORM); setAddressCoords(null);
-      firstRef.current?.focus();
+      nameRef.current?.focus();
     } finally {
       setSubmitting(false);
     }
-  }
-
-  function handleSelectSavedCustomer(c: SavedCustomer) {
-    setFields((f) => ({
-      ...f,
-      customerName: c.customerName,
-      customerPhone: c.phone,
-      deliveryAddress: c.lastAddress,
-    }));
-    setAddressCoords(null);
   }
 
   const canSubmit = fields.customerName.trim() && fields.customerPhone.trim() && fields.deliveryAddress.trim();
@@ -1633,11 +1588,22 @@ function CreateForm() {
       </button>
       {open && (
         <form onSubmit={handleSubmit} className="border-t border-gray-100 px-5 py-4 flex flex-col gap-4">
-          <CustomerSearch uid={uid} onSelect={handleSelectSavedCustomer} />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Customer name" required>
-              <input ref={firstRef} name="customerName" value={fields.customerName} onChange={handleChange} placeholder="Jane Wanjiru" required />
-            </Field>
+            <CustomerSearch
+              uid={uid}
+              value={fields.customerName}
+              onChange={(name) => setFields((f) => ({ ...f, customerName: name }))}
+              onSelect={(c) => {
+                setFields((f) => ({
+                  ...f,
+                  customerName: c.customerName,
+                  customerPhone: c.phone,
+                  deliveryAddress: c.lastAddress,
+                }));
+                setAddressCoords(null);
+              }}
+              inputRef={nameRef}
+            />
             <Field label="Phone number" required>
               <input name="customerPhone" value={fields.customerPhone} onChange={handleChange} placeholder="+254 712 345 678" type="tel" required />
             </Field>
