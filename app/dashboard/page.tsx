@@ -1500,20 +1500,24 @@ function CustomerSearch({
     return () => document.removeEventListener("mousedown", onOutside);
   }, []);
 
-  if (customers.length === 0) return null;
+  const hasCustomers = customers.length > 0;
 
   return (
     <div ref={containerRef} className="relative flex flex-col gap-1.5">
-      <label className="text-sm font-medium text-gray-700">Search saved customer</label>
+      <label className="text-sm font-medium text-gray-700">
+        Search saved customer
+        {!hasCustomers && <span className="ml-1 text-xs font-normal text-gray-400">(none saved yet)</span>}
+      </label>
       <input
         value={query}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        placeholder="Name or phone number…"
+        onFocus={() => { if (hasCustomers) setOpen(true); }}
+        placeholder={hasCustomers ? "Name or phone number…" : "Customers appear here after deliveries"}
+        disabled={!hasCustomers}
         autoComplete="off"
-        className={INPUT_CLASS}
+        className={`${INPUT_CLASS} ${!hasCustomers ? "opacity-50 cursor-not-allowed" : ""}`}
       />
-      {open && query.length >= 2 && (
+      {open && query.length >= 2 && hasCustomers && (
         <ul className="absolute z-20 left-0 right-0 top-full mt-1 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden">
           {filtered.length > 0 ? (
             <>
