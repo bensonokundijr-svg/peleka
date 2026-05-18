@@ -2142,7 +2142,6 @@ export default function DashboardPage() {
   // Trial + checklist computations
   const TRIAL_DAYS = 14;
   const trialDeliveriesUsed = deliveries.length;
-  const trialDeliveriesRemaining = Math.max(0, trialDeliveriesLimit - trialDeliveriesUsed);
   const trialDaysElapsed = trialStartDate > 0 ? Math.floor((Date.now() - trialStartDate) / 86_400_000) : 0;
   const trialDaysRemaining = Math.max(0, TRIAL_DAYS - trialDaysElapsed);
   const trialTimeExpired = trialStartDate > 0 && Date.now() > trialStartDate + TRIAL_DAYS * 86_400_000;
