@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/lib/firebase";
 import { ref, push, set, update, remove, onValue, get, serverTimestamp } from "firebase/database";
 import { useAuth } from "@/lib/auth-context";
-import type { Delivery, DeliveryStatus, FeedbackEntry, Rider, SavedCustomer } from "@/lib/types";
+import type { Delivery, FeedbackEntry, Rider, SavedCustomer } from "@/lib/types";
 import mapboxgl from "mapbox-gl";
 
 // ─── Period filter ────────────────────────────────────────────────────────────
@@ -49,23 +49,6 @@ function fmtDateTime(ts: number) {
   return d.toDateString() === today.toDateString()
     ? fmtTime(ts)
     : `${fmtDate(ts)} ${fmtTime(ts)}`;
-}
-
-// ─── StatusBadge ─────────────────────────────────────────────────────────────
-
-const STATUS_STYLES: Record<DeliveryStatus, string> = {
-  unassigned: "bg-gray-100 text-gray-600",
-  assigned:   "bg-blue-100 text-blue-700",
-  dispatched: "bg-amber-100 text-amber-700",
-  delivered:  "bg-green-100 text-green-700",
-  failed:     "bg-red-100 text-red-700",
-};
-function StatusBadge({ status }: { status: DeliveryStatus }) {
-  return (
-    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${STATUS_STYLES[status]}`}>
-      {status}
-    </span>
-  );
 }
 
 // ─── PeriodSelect ─────────────────────────────────────────────────────────────
@@ -112,49 +95,6 @@ function MetricBlock({
       </div>
       <p className={`text-3xl font-bold leading-none ${METRIC_NUM[color]}`}>{value}</p>
     </div>
-  );
-}
-
-// ─── Section wrapper with pagination ─────────────────────────────────────────
-
-const PAGE_SIZE = 5;
-
-function Section({
-  title, count, children, items, emptyText, action,
-}: {
-  title: string; count?: number; children: (visible: number) => React.ReactNode;
-  items: unknown[]; emptyText: string; action?: React.ReactNode;
-}) {
-  const [showAll, setShowAll] = useState(false);
-  const visible = showAll ? items.length : Math.min(PAGE_SIZE, items.length);
-
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-          {title}
-          {count !== undefined && (
-            <span className="ml-2 text-xs font-normal text-gray-400 normal-case">({count})</span>
-          )}
-        </h2>
-        {action}
-      </div>
-      {items.length === 0 ? (
-        <p className="text-sm text-gray-400 py-4 text-center">{emptyText}</p>
-      ) : (
-        <>
-          {children(visible)}
-          {items.length > PAGE_SIZE && (
-            <button
-              onClick={() => setShowAll((v) => !v)}
-              className="text-xs text-blue-600 hover:text-blue-800 font-medium self-center pt-1"
-            >
-              {showAll ? "Show less" : `See all ${items.length}`}
-            </button>
-          )}
-        </>
-      )}
-    </section>
   );
 }
 
@@ -722,96 +662,61 @@ function UnassignedSection({
 
   return (
     <>
-      <Section
-        title="Unassigned"
-        count={deliveries.length}
-        items={deliveries}
-        emptyText="No unassigned orders"
-        action={
-          selected.size >= 2 ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">{selected.size} selected</span>
-              <button
-                onClick={() => setSelected(new Set())}
-                className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-2 py-1"
-              >
-                Clear
+      {deliveries.length === 0 ? (
+        <p className="px-4 py-10 text-sm text-center text-gray-400">No unassigned deliveries</p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {deliveries.map((d) => (
+            <div key={d.id}
+              className={`flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors
+                ${selected.has(d.id) ? "bg-green-50" : ""}`}>
+              <button onClick={() => toggle(d.id)} aria-label="Select"
+                className={`shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors
+                  ${selected.has(d.id) ? "bg-green-600 border-green-600" : "border-gray-300 hover:border-green-500"}`}>
+                {selected.has(d.id) && (
+                  <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  </svg>
+                )}
               </button>
-              <button
-                onClick={handleOpenOrderStep}
-                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-              >
-                Assign Selected
+              <div className="flex-[2] min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{d.customerName}</p>
+                <p className="text-xs text-gray-400">{d.customerPhone}</p>
+              </div>
+              <p className="text-sm text-gray-600 truncate flex-[3] hidden sm:block">{d.deliveryAddress}</p>
+              <p className="text-xs text-gray-400 shrink-0 hidden md:block">{fmtDateTime(d.createdAt)}</p>
+              <button onClick={() => setSingleAssign(d)}
+                className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
+                Assign
               </button>
             </div>
-          ) : undefined
-        }
-      >
-        {(visible) => (
-          <div className="flex flex-col gap-2">
-            {deliveries.slice(0, visible).map((d) => (
-              <div
-                key={d.id}
-                className={`bg-white rounded-xl border p-4 flex flex-col gap-2.5 shadow-sm transition-colors
-                  ${selected.has(d.id) ? "border-blue-400 ring-1 ring-blue-400" : "border-gray-200"}`}
-              >
-                <div className="flex items-start gap-2.5">
-                  <button
-                    onClick={() => toggle(d.id)}
-                    aria-label={selected.has(d.id) ? "Deselect" : "Select for batch"}
-                    className={`mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors
-                      ${selected.has(d.id) ? "bg-blue-600 border-blue-600" : "border-gray-300 hover:border-blue-400 bg-white"}`}
-                  >
-                    {selected.has(d.id) && (
-                      <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                      </svg>
-                    )}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-semibold text-gray-900 text-sm leading-tight">{d.customerName}</p>
-                      <p className="text-xs text-gray-400 shrink-0">{fmtDateTime(d.createdAt)}</p>
-                    </div>
-                    <p className="text-xs text-gray-500">{d.customerPhone}</p>
-                    <p className="text-sm text-gray-700 mt-1">{d.deliveryAddress}</p>
-                    {d.notes && <p className="text-xs text-gray-400 italic mt-0.5">{d.notes}</p>}
-                  </div>
-                </div>
-                <div className="flex justify-end pt-1 border-t border-gray-100">
-                  <button
-                    onClick={() => setSingleAssign(d)}
-                    className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100"
-                  >
-                    Assign Rider
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
+          ))}
+        </div>
+      )}
+
+      {/* Floating batch bar */}
+      {selected.size >= 2 && (
+        <div className="fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-30 bg-gray-900 text-white rounded-full px-5 py-3 flex items-center gap-4 shadow-xl">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <button onClick={() => setSelected(new Set())} className="text-xs text-gray-400 hover:text-white">Clear</button>
+          <button onClick={handleOpenOrderStep}
+            className="bg-green-600 text-white px-4 py-1.5 rounded-full text-sm font-semibold hover:bg-green-500 transition-colors">
+            Assign to rider →
+          </button>
+        </div>
+      )}
 
       {singleAssign && (
-        <AssignModal
-          title={`Assign rider — ${singleAssign.customerName}`}
-          onConfirm={handleSingleAssign}
-          onClose={() => setSingleAssign(null)}
-        />
+        <AssignModal title={`Assign rider — ${singleAssign.customerName}`}
+          onConfirm={handleSingleAssign} onClose={() => setSingleAssign(null)} />
       )}
       {showOrderStep && (
-        <RouteOrderModal
-          deliveries={orderedBatch}
-          onConfirm={handleOrderConfirm}
-          onClose={() => setShowOrderStep(false)}
-        />
+        <RouteOrderModal deliveries={orderedBatch} onConfirm={handleOrderConfirm}
+          onClose={() => setShowOrderStep(false)} />
       )}
       {showBatch && (
-        <AssignModal
-          title={`Assign ${orderedBatch.length} stops`}
-          onConfirm={handleBatchAssign}
-          onClose={() => setShowBatch(false)}
-        />
+        <AssignModal title={`Assign ${orderedBatch.length} stops`}
+          onConfirm={handleBatchAssign} onClose={() => setShowBatch(false)} />
       )}
     </>
   );
@@ -879,51 +784,38 @@ function AssignedSection({
     }
   }
 
-  return (
-    <Section title="Assigned" count={deliveries.length} items={deliveries} emptyText="No assigned orders">
-      {(visible) => (
-        <div className="flex flex-col gap-2">
-          {deliveries.slice(0, visible).map((d) => (
-            <div key={d.id} className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2.5 shadow-sm">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-gray-900 text-sm leading-tight">{d.customerName}</p>
-                  <p className="text-xs text-gray-500">{d.customerPhone}</p>
-                  <p className="text-sm text-gray-700 mt-1">{d.deliveryAddress}</p>
-                </div>
-                <p className="text-xs text-gray-400 shrink-0">{fmtDateTime(d.createdAt)}</p>
+  return deliveries.length === 0 ? (
+    <p className="px-4 py-10 text-sm text-center text-gray-400">No assigned deliveries</p>
+  ) : (
+    <div className="divide-y divide-gray-100">
+      {deliveries.map((d) => (
+        <div key={d.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+          <div className="flex-[2] min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">{d.customerName}</p>
+            <p className="text-xs text-gray-400">{d.customerPhone}</p>
+          </div>
+          <p className="text-sm text-gray-600 truncate flex-[3] hidden sm:block">{d.deliveryAddress}</p>
+          {d.riderName && (
+            <div className="shrink-0 hidden md:flex items-center gap-1.5">
+              <div className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600 shrink-0">
+                {d.riderName.charAt(0)}
               </div>
-              {d.riderName && (
-                <div className="flex items-center gap-2 text-sm text-gray-700">
-                  <svg className="w-3.5 h-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                  </svg>
-                  <span className="font-medium text-xs">{d.riderName}</span>
-                  <span className="text-gray-400 text-xs">·</span>
-                  <span className="text-xs text-gray-500">{d.riderPhone}</span>
-                </div>
-              )}
-              <div className="flex justify-end gap-2 pt-1 border-t border-gray-100">
-                <button
-                  onClick={() => handleUnassign(d)}
-                  disabled={unassigning === d.id}
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  {unassigning === d.id ? "…" : "Unassign"}
-                </button>
-                <button
-                  onClick={() => handleDispatch(d)}
-                  disabled={dispatching === d.id}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50"
-                >
-                  {dispatching === d.id ? "Dispatching…" : "Dispatch"}
-                </button>
-              </div>
+              <span className="text-xs text-gray-600 truncate max-w-[80px]">{d.riderName}</span>
             </div>
-          ))}
+          )}
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => handleUnassign(d)} disabled={unassigning === d.id}
+              className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-50 transition-colors">
+              {unassigning === d.id ? "…" : "Unassign"}
+            </button>
+            <button onClick={() => handleDispatch(d)} disabled={dispatching === d.id}
+              className="text-xs font-semibold px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors">
+              {dispatching === d.id ? "…" : "Dispatch"}
+            </button>
+          </div>
         </div>
-      )}
-    </Section>
+      ))}
+    </div>
   );
 }
 
@@ -1003,77 +895,41 @@ function DispatchedSection({
 
   return (
     <>
-      <Section title="Dispatched" count={deliveries.length} items={deliveries} emptyText="No active dispatched orders">
-        {(visible) => (
-          <div className="flex flex-col gap-2">
-            {deliveries.slice(0, visible).map((d) => (
-              <div key={d.id} className="bg-white rounded-xl border border-amber-200 p-4 flex flex-col gap-2.5 shadow-sm">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-gray-900 text-sm leading-tight">{d.customerName}</p>
-                    <p className="text-xs text-gray-500">{d.customerPhone}</p>
-                    <p className="text-sm text-gray-700 mt-1">{d.deliveryAddress}</p>
-                  </div>
-                  <p className="text-xs text-gray-400 shrink-0">
-                    {d.dispatchedAt ? fmtDateTime(d.dispatchedAt) : fmtDateTime(d.createdAt)}
-                  </p>
-                </div>
-                {d.riderName && (
-                  <p className="text-xs text-gray-600">
-                    <span className="font-medium">{d.riderName}</span>
-                    <span className="text-gray-400"> · {d.riderPhone}</span>
-                  </p>
-                )}
-                <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-100">
-                  <button
-                    onClick={() => copyTrackingLink(d.id)}
-                    className={`text-xs flex items-center gap-1 transition-colors
-                      ${copiedId === d.id ? "text-green-600" : "text-gray-400 hover:text-blue-600"}`}
-                  >
-                    {copiedId === d.id ? (
-                      <>
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                        </svg>
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
-                        </svg>
-                        Copy customer link
-                      </>
-                    )}
-                  </button>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setFailTarget(d)}
-                      disabled={!!marking}
-                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50"
-                    >
-                      Mark Failed
-                    </button>
-                    <button
-                      onClick={() => handleDeliver(d)}
-                      disabled={marking === d.id}
-                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                    >
-                      {marking === d.id ? "Saving…" : "Mark Delivered"}
-                    </button>
-                  </div>
-                </div>
+      {deliveries.length === 0 ? (
+        <p className="px-4 py-10 text-sm text-center text-gray-400">No dispatched deliveries</p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {deliveries.map((d) => (
+            <div key={d.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+              <div className="flex-[2] min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{d.customerName}</p>
+                <p className="text-xs text-gray-400">{d.customerPhone}</p>
               </div>
-            ))}
-          </div>
-        )}
-      </Section>
-
+              <p className="text-sm text-gray-600 truncate flex-[3] hidden sm:block">{d.deliveryAddress}</p>
+              <div className="shrink-0 hidden md:block text-right">
+                {d.riderName && <p className="text-xs text-gray-600">{d.riderName}</p>}
+                <p className="text-xs text-gray-400">{fmtDateTime(d.dispatchedAt ?? d.createdAt)}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => copyTrackingLink(d.id)}
+                  className={`text-xs transition-colors hidden sm:block ${copiedId === d.id ? "text-green-600" : "text-gray-400 hover:text-gray-600"}`}>
+                  {copiedId === d.id ? "Copied!" : "Copy link"}
+                </button>
+                <button onClick={() => setFailTarget(d)} disabled={!!marking}
+                  className="text-xs font-medium px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+                  Failed
+                </button>
+                <button onClick={() => handleDeliver(d)} disabled={marking === d.id}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors">
+                  {marking === d.id ? "…" : "Delivered"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {failTarget && (
-        <FailureReasonModal
-          onConfirm={(reason) => handleFail(failTarget, reason)}
-          onClose={() => setFailTarget(null)}
-        />
+        <FailureReasonModal onConfirm={(reason) => handleFail(failTarget, reason)} onClose={() => setFailTarget(null)} />
       )}
     </>
   );
@@ -1097,93 +953,83 @@ function DeliveredSection({
   const filtered = deliveries.filter((d) => inPeriod(d.deliveredAt ?? d.createdAt, period));
 
   return (
-    <Section
-      title="Delivered"
-      count={filtered.length}
-      items={filtered}
-      emptyText={`No deliveries for ${PERIOD_LABELS[period].toLowerCase()}`}
-      action={<PeriodSelect value={period} onChange={setPeriod} />}
-    >
-      {(visible) => (
-        <div className="flex flex-col gap-2">
-          {filtered.slice(0, visible).map((d) => (
-            <div key={d.id} className="bg-white rounded-xl border border-green-200 p-4 flex flex-col gap-1.5 shadow-sm">
-              <div className="flex items-start justify-between gap-2">
-                <p className="font-semibold text-gray-900 text-sm">{d.customerName}</p>
-                {d.deliveredAt && <p className="text-xs text-gray-400 shrink-0">{fmtDateTime(d.deliveredAt)}</p>}
+    <>
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+        <p className="text-xs text-gray-500">{filtered.length} {filtered.length === 1 ? "delivery" : "deliveries"}</p>
+        <PeriodSelect value={period} onChange={setPeriod} />
+      </div>
+      {filtered.length === 0 ? (
+        <p className="px-4 py-10 text-sm text-center text-gray-400">
+          No deliveries for {PERIOD_LABELS[period].toLowerCase()}
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {filtered.map((d) => {
+            const hasFeedback = feedbackReceivedIds.has(d.id);
+            const failedNotif = notifications.find((n) => n.id === d.id);
+            const msSinceDelivery = Date.now() - (d.deliveredAt ?? 0);
+            const isQueued = feedbackDelay > 0 && !hasFeedback && !failedNotif
+              && msSinceDelivery < feedbackDelay * 60_000;
+            return (
+              <div key={d.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+                <div className="flex-[2] min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">{d.customerName}</p>
+                  <p className="text-xs text-gray-400">{d.customerPhone}</p>
+                </div>
+                <p className="text-sm text-gray-600 truncate flex-[3] hidden sm:block">{d.deliveryAddress}</p>
+                <div className="shrink-0 hidden md:block text-right">
+                  {d.riderName && <p className="text-xs text-gray-600">{d.riderName}</p>}
+                  {d.deliveredAt && <p className="text-xs text-gray-400">{fmtDateTime(d.deliveredAt)}</p>}
+                </div>
+                <div className="shrink-0 flex items-center gap-2">
+                  {hasFeedback && (
+                    <span className="text-xs font-medium text-green-600 flex items-center gap-1">
+                      <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                      </svg>
+                      <span className="hidden sm:inline">Feedback</span>
+                    </span>
+                  )}
+                  {isQueued && (
+                    <span className="text-xs text-amber-500 flex items-center gap-1">
+                      <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                      </svg>
+                      <span className="hidden sm:inline">Queued</span>
+                    </span>
+                  )}
+                  {failedNotif && (
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(failedNotif.feedbackUrl);
+                          setCopiedFailedId(d.id);
+                          setTimeout(() => setCopiedFailedId(null), 2000);
+                        }}
+                        className={`text-xs font-medium px-2 py-1 rounded-md border transition-colors
+                          ${copiedFailedId === d.id
+                            ? "border-green-300 bg-green-50 text-green-700"
+                            : "border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600"}`}
+                      >
+                        {copiedFailedId === d.id ? "Copied!" : "Copy link"}
+                      </button>
+                      <a
+                        href={whatsappFeedbackUrl(failedNotif)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium px-2 py-1 rounded-md border border-green-200 text-green-700 hover:bg-green-50 transition-colors"
+                      >
+                        WA
+                      </a>
+                    </div>
+                  )}
+                </div>
               </div>
-              <p className="text-xs text-gray-500">{d.deliveryAddress}</p>
-              {d.riderName && (
-                <p className="text-xs text-gray-500">
-                  Rider: <span className="font-medium text-gray-700">{d.riderName}</span>
-                </p>
-              )}
-              {d.dispatchedAt && d.deliveredAt && (
-                <p className="text-xs text-gray-400">
-                  Dispatched {fmtDateTime(d.dispatchedAt)} → Delivered {fmtDateTime(d.deliveredAt)}
-                </p>
-              )}
-              {/* Smart feedback status */}
-              {(() => {
-                const hasFeedback = feedbackReceivedIds.has(d.id);
-                const failedNotif = notifications.find((n) => n.id === d.id);
-                const msSinceDelivery = Date.now() - (d.deliveredAt ?? 0);
-                const isQueued = feedbackDelay > 0 && !hasFeedback && !failedNotif
-                  && msSinceDelivery < feedbackDelay * 60_000;
-
-                if (!hasFeedback && !failedNotif && !isQueued) return null;
-
-                return (
-                  <div className="pt-1.5 border-t border-gray-100 mt-1">
-                    {hasFeedback && (
-                      <span className="text-xs font-medium text-green-600 flex items-center gap-1">
-                        <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                        </svg>
-                        Feedback received
-                      </span>
-                    )}
-                    {isQueued && (
-                      <span className="text-xs text-amber-600 flex items-center gap-1">
-                        <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                        </svg>
-                        Feedback queued
-                      </span>
-                    )}
-                    {failedNotif && (
-                      <div className="flex gap-2">
-                        <button
-                          onClick={async () => {
-                            await navigator.clipboard.writeText(failedNotif.feedbackUrl);
-                            setCopiedFailedId(d.id);
-                            setTimeout(() => setCopiedFailedId(null), 2000);
-                          }}
-                          className={`flex-1 text-xs font-medium py-1 rounded-lg border transition-colors text-center
-                            ${copiedFailedId === d.id
-                              ? "border-green-300 bg-green-50 text-green-700"
-                              : "border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50"}`}
-                        >
-                          {copiedFailedId === d.id ? "Copied!" : "Copy feedback link"}
-                        </button>
-                        <a
-                          href={whatsappFeedbackUrl(failedNotif)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 text-xs font-medium py-1 rounded-lg border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 text-center transition-colors"
-                        >
-                          WhatsApp
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
-    </Section>
+    </>
   );
 }
 
@@ -1194,39 +1040,37 @@ function FailedSection({ deliveries }: { deliveries: Delivery[] }) {
   const filtered = deliveries.filter((d) => inPeriod(d.deliveredAt ?? d.createdAt, period));
 
   return (
-    <Section
-      title="Failed / Cancelled"
-      count={filtered.length}
-      items={filtered}
-      emptyText={`No failed deliveries for ${PERIOD_LABELS[period].toLowerCase()}`}
-      action={<PeriodSelect value={period} onChange={setPeriod} />}
-    >
-      {(visible) => (
-        <div className="flex flex-col gap-2">
-          {filtered.slice(0, visible).map((d) => (
-            <div key={d.id} className="bg-white rounded-xl border border-red-200 p-4 flex flex-col gap-1.5 shadow-sm">
-              <div className="flex items-start justify-between gap-2">
-                <p className="font-semibold text-gray-900 text-sm">{d.customerName}</p>
-                {(d.deliveredAt || d.createdAt) && (
-                  <p className="text-xs text-gray-400 shrink-0">{fmtDateTime(d.deliveredAt ?? d.createdAt)}</p>
-                )}
+    <>
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+        <p className="text-xs text-gray-500">{filtered.length} {filtered.length === 1 ? "delivery" : "deliveries"}</p>
+        <PeriodSelect value={period} onChange={setPeriod} />
+      </div>
+      {filtered.length === 0 ? (
+        <p className="px-4 py-10 text-sm text-center text-gray-400">
+          No failed deliveries for {PERIOD_LABELS[period].toLowerCase()}
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {filtered.map((d) => (
+            <div key={d.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+              <div className="flex-[2] min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{d.customerName}</p>
+                <p className="text-xs text-gray-400">{d.customerPhone}</p>
               </div>
-              <p className="text-xs text-gray-500">{d.deliveryAddress}</p>
-              {d.riderName && (
-                <p className="text-xs text-gray-500">
-                  Rider: <span className="font-medium text-gray-700">{d.riderName}</span>
-                </p>
-              )}
-              {d.failureReason && (
-                <p className="text-xs font-medium text-red-600 bg-red-50 px-2 py-1 rounded-md w-fit">
-                  {d.failureReason}
-                </p>
-              )}
+              <p className="text-sm text-gray-600 truncate flex-[3] hidden sm:block">{d.deliveryAddress}</p>
+              <div className="shrink-0 flex items-center gap-2">
+                {d.failureReason && (
+                  <span className="text-xs font-medium text-red-600 bg-red-50 px-2 py-1 rounded-md hidden sm:inline-block">
+                    {d.failureReason}
+                  </span>
+                )}
+                <p className="text-xs text-gray-400 shrink-0">{fmtDateTime(d.deliveredAt ?? d.createdAt)}</p>
+              </div>
             </div>
           ))}
         </div>
       )}
-    </Section>
+    </>
   );
 }
 
@@ -1657,32 +1501,141 @@ function CustomerSearch({
   );
 }
 
-// ─── Create delivery form ─────────────────────────────────────────────────────
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-const EMPTY_FORM = { customerName: "", customerPhone: "", deliveryAddress: "", notes: "" };
+type ActiveView = "deliveries" | "feedback";
 
-function CreateForm({ openSignal, trialExhausted, planName: planDisplayName }: {
-  openSignal?: number;
-  trialExhausted?: boolean;
-  planName?: string;
+function Sidebar({
+  businessName, userEmail, activeView, onViewChange, onSignOut,
+}: {
+  businessName: string; userEmail: string;
+  activeView: ActiveView; onViewChange: (v: ActiveView) => void;
+  onSignOut: () => void;
 }) {
-  const { user } = useAuth();
-  const uid = user!.uid;
-  const [open, setOpen] = useState(false);
-  const [fields, setFields] = useState(EMPTY_FORM);
+  const pathname = usePathname();
+
+  const navItems = [
+    {
+      label: "Dashboard", view: "deliveries" as ActiveView, href: null,
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Riders", view: null, href: "/riders",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Feedback", view: "feedback" as ActiveView, href: null,
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Automations", view: null, href: "/automations",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Settings", view: null, href: "/settings",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+        </svg>
+      ),
+    },
+  ];
+
+  function isActive(item: typeof navItems[number]) {
+    if (item.view) return activeView === item.view;
+    return pathname === item.href;
+  }
+
+  const navContent = navItems.map((item) => {
+    const active = isActive(item);
+    const cls = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full text-left
+      ${active ? "bg-green-50 text-green-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`;
+    const inner = <>{item.icon}{item.label}</>;
+    if (item.href) return (
+      <Link key={item.label} href={item.href} className={cls}>{inner}</Link>
+    );
+    return (
+      <button key={item.label} onClick={() => onViewChange(item.view!)} className={cls}>{inner}</button>
+    );
+  });
+
+  return (
+    <>
+      {/* Desktop sidebar */}
+      <aside className="hidden lg:flex flex-col fixed left-0 top-0 bottom-0 w-60 bg-white border-r border-gray-200 z-20">
+        <div className="px-5 py-5 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center shrink-0">
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+              </svg>
+            </div>
+            <span className="font-bold text-gray-900 text-base tracking-tight">Peleka</span>
+          </div>
+        </div>
+        <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5 overflow-y-auto">
+          {navContent}
+        </nav>
+        <div className="px-4 py-4 border-t border-gray-100 shrink-0">
+          <p className="text-xs font-semibold text-gray-900 truncate">{businessName || "My Business"}</p>
+          <p className="text-xs text-gray-400 truncate mt-0.5">{userEmail}</p>
+          <button onClick={onSignOut} className="mt-3 text-xs text-gray-400 hover:text-gray-700 transition-colors">
+            Sign out
+          </button>
+        </div>
+      </aside>
+
+      {/* Mobile bottom nav */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-gray-200 flex">
+        {navItems.map((item) => {
+          const active = isActive(item);
+          const inner = (
+            <div className={`flex flex-col items-center gap-0.5 py-2 px-1 flex-1 transition-colors
+              ${active ? "text-green-600" : "text-gray-400"}`}>
+              {item.icon}
+              <span className="text-[10px] font-medium leading-none">{item.label}</span>
+            </div>
+          );
+          if (item.href) return <Link key={item.label} href={item.href} className="flex-1 flex justify-center">{inner}</Link>;
+          return <button key={item.label} onClick={() => onViewChange(item.view!)} className="flex-1">{inner}</button>;
+        })}
+      </nav>
+    </>
+  );
+}
+
+// ─── New delivery panel ────────────────────────────────────────────────────────
+
+function NewDeliveryPanel({ uid, onClose, trialExhausted }: {
+  uid: string; onClose: () => void; trialExhausted?: boolean;
+}) {
+  const EMPTY = { customerName: "", customerPhone: "", deliveryAddress: "", notes: "" };
+  const [fields, setFields] = useState(EMPTY);
   const [addressCoords, setAddressCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const nameRef = useRef<HTMLInputElement>(null);
-  const prevSignal = useRef(openSignal ?? 0);
 
   useEffect(() => {
-    if (openSignal !== undefined && openSignal > prevSignal.current) {
-      setOpen(true);
-      prevSignal.current = openSignal;
-    }
-  }, [openSignal]);
-
-  void planDisplayName;
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setFields((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -1690,7 +1643,7 @@ function CreateForm({ openSignal, trialExhausted, planName: planDisplayName }: {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting) return;
+    if (submitting || trialExhausted) return;
     setSubmitting(true);
     try {
       const newRef = await push(ref(db, `deliveries/${uid}`), {
@@ -1707,8 +1660,7 @@ function CreateForm({ openSignal, trialExhausted, planName: planDisplayName }: {
           notes: fields.notes.trim() || "", ...(addressCoords ?? {}),
         });
       }
-      setFields(EMPTY_FORM); setAddressCoords(null);
-      nameRef.current?.focus();
+      onClose();
     } finally {
       setSubmitting(false);
     }
@@ -1717,218 +1669,62 @@ function CreateForm({ openSignal, trialExhausted, planName: planDisplayName }: {
   const canSubmit = fields.customerName.trim() && fields.customerPhone.trim() && fields.deliveryAddress.trim();
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-5 py-3.5 text-left"
-      >
-        <span className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          New Delivery
-        </span>
-        <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-        </svg>
-      </button>
-      {open && (
-        <form onSubmit={handleSubmit} className="border-t border-gray-100 px-5 py-4 flex flex-col gap-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <CustomerSearch
-              uid={uid}
-              value={fields.customerName}
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
+      <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+          <h2 className="text-base font-semibold text-gray-900">New Delivery</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-4">
+            <CustomerSearch uid={uid} value={fields.customerName}
               onChange={(name) => setFields((f) => ({ ...f, customerName: name }))}
-              onSelect={(c) => {
-                setFields((f) => ({
-                  ...f,
-                  customerName: c.customerName,
-                  customerPhone: c.phone,
-                  deliveryAddress: c.lastAddress,
-                }));
-                setAddressCoords(null);
-              }}
-              inputRef={nameRef}
+              onSelect={(c) => { setFields((f) => ({ ...f, customerName: c.customerName, customerPhone: c.phone, deliveryAddress: c.lastAddress })); setAddressCoords(null); }}
             />
             <Field label="Phone number" required>
-              <input name="customerPhone" value={fields.customerPhone} onChange={handleChange} placeholder="+254 712 345 678" type="tel" required />
+              <input name="customerPhone" value={fields.customerPhone} onChange={handleChange}
+                placeholder="+254 712 345 678" type="tel" required />
             </Field>
+            <AddressAutocomplete
+              value={fields.deliveryAddress}
+              onChange={(t) => { setFields((f) => ({ ...f, deliveryAddress: t })); setAddressCoords(null); }}
+              onSelect={(addr, lat, lng) => { setFields((f) => ({ ...f, deliveryAddress: addr })); setAddressCoords({ lat, lng }); }}
+            />
+            {addressCoords && (
+              <p className="text-xs text-green-600 flex items-center gap-1 -mt-2">
+                <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
+                Location pinned
+              </p>
+            )}
+            <Field label="Order notes">
+              <textarea name="notes" value={fields.notes} onChange={handleChange}
+                placeholder="Leave at gate, call on arrival…" rows={2} className="resize-none" />
+            </Field>
+            {trialExhausted && (
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                Free trial ended — contact us to upgrade.
+              </div>
+            )}
           </div>
-          <AddressAutocomplete
-            value={fields.deliveryAddress}
-            onChange={(t) => { setFields((f) => ({ ...f, deliveryAddress: t })); setAddressCoords(null); }}
-            onSelect={(addr, lat, lng) => { setFields((f) => ({ ...f, deliveryAddress: addr })); setAddressCoords({ lat, lng }); }}
-          />
-          {addressCoords && (
-            <p className="text-xs text-green-600 flex items-center gap-1 -mt-2">
-              <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-              </svg>
-              Location pinned
-            </p>
-          )}
-          <Field label="Order notes">
-            <textarea name="notes" value={fields.notes} onChange={handleChange} placeholder="Leave at gate, call on arrival…" rows={2} className="resize-none" />
-          </Field>
-
-          {trialExhausted && (
-            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
-              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-              </svg>
-              Free trial ended — contact us to upgrade.
-            </div>
-          )}
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={!canSubmit || submitting || !!trialExhausted}
-              className="px-6 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {submitting ? "Saving…" : "Create Delivery"}
+          <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+            <button type="submit" disabled={!canSubmit || submitting || !!trialExhausted}
+              className="w-full py-2.5 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              {submitting ? "Creating…" : "Create Delivery"}
             </button>
           </div>
         </form>
-      )}
-    </div>
-  );
-}
-
-// ─── Riders section ───────────────────────────────────────────────────────────
-
-function RidersSection({ expandSignal }: { expandSignal?: number }) {
-  const { user } = useAuth();
-  const uid = user!.uid;
-  const [riders, setRiders] = useState<Rider[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const prevExpandSignal = useRef(expandSignal ?? 0);
-
-  useEffect(() => {
-    if (expandSignal !== undefined && expandSignal > prevExpandSignal.current) {
-      setOpen(true);
-      prevExpandSignal.current = expandSignal;
-    }
-  }, [expandSignal]);
-
-  useEffect(() => {
-    const unsub = onValue(ref(db, `riders-list/${uid}`), (snap) => {
-      const data = snap.val() as Record<string, Omit<Rider, "id">> | null;
-      setRiders(data ? Object.entries(data).map(([id, v]) => ({ id, ...v })) : []);
-      setLoading(false);
-    });
-    return unsub;
-  }, [uid]);
-
-  async function handleAdd(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !phone.trim() || saving) return;
-    setSaving(true);
-    try {
-      const newRef = await push(ref(db, `riders-list/${uid}`), { name: name.trim(), phone: phone.trim() });
-      if (newRef.key) await set(ref(db, `rider-index/${newRef.key}`), uid);
-      setName(""); setPhone(""); setShowForm(false);
-    } finally { setSaving(false); }
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-5 py-3.5 text-left"
-      >
-        <span className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-          </svg>
-          Riders
-          {!loading && <span className="ml-1 text-xs font-normal text-gray-400">({riders.length})</span>}
-        </span>
-        <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="border-t border-gray-100">
-          {!showForm && (
-            <div className="px-5 py-3 flex justify-end">
-              <button
-                onClick={() => setShowForm(true)}
-                className="text-sm font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                Add Rider
-              </button>
-            </div>
-          )}
-          {showForm && (
-            <form onSubmit={handleAdd} className="px-5 py-4 flex flex-col gap-3 border-b border-gray-100">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" required autoFocus
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone number" type="tel" required
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-              </div>
-              <div className="flex gap-2 justify-end">
-                <button type="button" onClick={() => { setShowForm(false); setName(""); setPhone(""); }}
-                  className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={!name.trim() || !phone.trim() || saving}
-                  className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-            </form>
-          )}
-          {loading ? (
-            <div className="flex justify-center py-6">
-              <div className="w-5 h-5 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-            </div>
-          ) : riders.length === 0 && !showForm ? (
-            <p className="text-sm text-gray-400 text-center py-6">No riders yet</p>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {riders.map((rider) => (
-                <div key={rider.id} className="flex items-center gap-3 px-5 py-3">
-                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm font-bold text-gray-600 shrink-0">
-                    {rider.name.charAt(0)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">{rider.name}</p>
-                    <p className="text-xs text-gray-500">{rider.phone}</p>
-                  </div>
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(`${window.location.origin}/rider/${rider.id}`);
-                        setCopiedId(rider.id); setTimeout(() => setCopiedId(null), 2000);
-                      }}
-                      className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors
-                        ${copiedId === rider.id ? "border-green-300 text-green-600 bg-green-50" : "border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50"}`}
-                    >
-                      {copiedId === rider.id ? "Copied" : "Copy link"}
-                    </button>
-                    <button
-                      onClick={() => remove(ref(db, `riders-list/${uid}/${rider.id}`))}
-                      className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-red-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -2042,6 +1838,8 @@ function ActivationChecklist({
 
 // ─── Dashboard page ───────────────────────────────────────────────────────────
 
+type SectionKey = "unassigned" | "assigned" | "dispatched" | "delivered" | "failed";
+
 export default function DashboardPage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const router = useRouter();
@@ -2052,7 +1850,9 @@ export default function DashboardPage() {
   const [activePanel, setActivePanel] = useState<Delivery | null>(null);
   const [deliveredPeriod, setDeliveredPeriod] = useState<Period>("today");
   const [cancelledPeriod, setCancelledPeriod] = useState<Period>("today");
-  const [activeTab, setActiveTab] = useState<"deliveries" | "feedback">("deliveries");
+  const [activeView, setActiveView] = useState<ActiveView>("deliveries");
+  const [activeSection, setActiveSection] = useState<SectionKey>("unassigned");
+  const [showNewDelivery, setShowNewDelivery] = useState(false);
   const [notifications, setNotifications] = useState<NotificationEntry[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [feedbackReceivedIds, setFeedbackReceivedIds] = useState<Set<string>>(new Set());
@@ -2064,9 +1864,7 @@ export default function DashboardPage() {
   const [planName, setPlanName] = useState("");
   const [checklistDismissed, setChecklistDismissed] = useState(false);
   const [ridersCount, setRidersCount] = useState(0);
-  const [createFormSignal, setCreateFormSignal] = useState(0);
-  const [ridersExpandSignal, setRidersExpandSignal] = useState(0);
-  const ridersRef = useRef<HTMLDivElement>(null);
+  void planName;
 
   useEffect(() => {
     if (!user) return;
@@ -2162,287 +1960,236 @@ export default function DashboardPage() {
   const deliveredFiltered = delivered.filter((d) => inPeriod(d.deliveredAt ?? d.createdAt, deliveredPeriod));
   const cancelledFiltered = failed.filter((d) => inPeriod(d.deliveredAt ?? d.createdAt, cancelledPeriod));
 
-  // This month summary
-  const monthStart = periodStart("month");
-  const thisMonthDelivered = delivered.filter((d) => (d.deliveredAt ?? d.createdAt) >= monthStart).length;
-  const thisMonthFailed    = failed.filter((d) => (d.deliveredAt ?? d.createdAt) >= monthStart).length;
-  const thisMonthTotal     = deliveries.filter((d) => (d.createdAt ?? 0) >= monthStart).length;
+  const sectionTabs: { key: SectionKey; label: string; count: number }[] = [
+    { key: "unassigned", label: "Unassigned", count: unassigned.length },
+    { key: "assigned",   label: "Assigned",   count: assigned.length },
+    { key: "dispatched", label: "Dispatched",  count: dispatched.length },
+    { key: "delivered",  label: "Delivered",   count: delivered.length },
+    { key: "failed",     label: "Failed",      count: failed.length },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
-              </svg>
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-base font-bold text-gray-900 leading-tight truncate">
-                {businessName || "Peleka"}
-              </h1>
-              <p className="text-xs text-gray-500 truncate">{user.email}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Notification bell */}
+    <div className="flex h-screen bg-gray-50 overflow-hidden">
+      {/* Sidebar */}
+      <Sidebar
+        businessName={businessName}
+        userEmail={user.email ?? ""}
+        activeView={activeView}
+        onViewChange={setActiveView}
+        onSignOut={() => signOut().then(() => router.push("/login"))}
+      />
+
+      {/* Main */}
+      <div className="flex-1 flex flex-col min-w-0 lg:ml-60">
+        {/* Top bar */}
+        <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3.5 flex items-center justify-between shrink-0 z-10">
+          <h1 className="text-base font-semibold text-gray-900">
+            {activeView === "feedback" ? "Feedback" : "Dashboard"}
+          </h1>
+          <div className="flex items-center gap-2">
+            {/* Notifications */}
             <div className="relative">
               {notifications.length > 0 && (
                 <button
                   onClick={() => setShowNotifications((v) => !v)}
-                  className="relative w-8 h-8 flex items-center justify-center rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 transition-colors"
-                  aria-label={`${notifications.length} notification${notifications.length > 1 ? "s" : ""}`}
+                  className="relative w-8 h-8 flex items-center justify-center rounded-lg border border-red-200 bg-red-50 hover:bg-red-100"
+                  aria-label="Notifications"
                 >
                   <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
                   </svg>
-                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center px-1">
                     {notifications.length}
                   </span>
                 </button>
               )}
               {showNotifications && notifications.length > 0 && (
-                <NotificationsPanel
-                  notifications={notifications}
-                  uid={uid}
-                  onClose={() => setShowNotifications(false)}
-                />
+                <NotificationsPanel notifications={notifications} uid={uid} onClose={() => setShowNotifications(false)} />
               )}
             </div>
-            <Link href="/automations" className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5">Automations</Link>
-            <Link href="/settings" className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5">Settings</Link>
-            <button onClick={() => signOut().then(() => router.push("/login"))}
-              className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5">Sign out</button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 flex flex-col gap-6">
-
-        {/* Create + Riders (collapsible) */}
-        <div className="flex flex-col gap-3">
-          <CreateForm openSignal={createFormSignal} trialExhausted={trialExhausted} planName={planName} />
-          <div ref={ridersRef}>
-            <RidersSection expandSignal={ridersExpandSignal} />
-          </div>
-        </div>
-
-        {/* Activation checklist */}
-        {!loading && showChecklist && (
-          <ActivationChecklist
-            riderAdded={ridersCount > 0}
-            firstDeliveryCreated={deliveries.length > 0}
-            firstDispatched={firstDispatched}
-            onCreateDelivery={() => {
-              window.scrollTo({ top: 0, behavior: "smooth" });
-              setTimeout(() => setCreateFormSignal((v) => v + 1), 200);
-            }}
-            onScrollToRiders={() => {
-              setRidersExpandSignal((v) => v + 1);
-              setTimeout(() => ridersRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-            }}
-            onDismiss={() => {
-              setChecklistDismissed(true);
-              set(ref(db, `businesses/${uid}/profile/checklistDismissed`), true).catch(() => {});
-            }}
-          />
-        )}
-
-        {/* Trial counter */}
-        {!loading && trialDeliveriesLimit > 0 && !trialExhausted && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-xs font-medium text-gray-700">Free trial</p>
-              <p className="text-xs text-gray-500">
-                {trialDeliveriesUsed} of {trialDeliveriesLimit} deliveries used
-                {trialStartDate > 0 && (
-                  <span className={trialDaysRemaining <= 3 ? " · text-amber-600 font-medium" : ""}>
-                    {" "}· {trialDaysRemaining} day{trialDaysRemaining !== 1 ? "s" : ""} left
-                  </span>
-                )}
-              </p>
-            </div>
-            <div className="w-full bg-gray-100 rounded-full h-1.5">
-              <div
-                className={`h-1.5 rounded-full transition-all ${trialDaysRemaining <= 3 ? "bg-amber-500" : "bg-blue-500"}`}
-                style={{ width: `${Math.min(100, (trialDeliveriesUsed / trialDeliveriesLimit) * 100)}%` }}
-              />
-            </div>
-          </div>
-        )}
-        {!loading && trialExhausted && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 flex items-center gap-3">
-            <svg className="w-5 h-5 text-amber-500 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-            </svg>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-amber-800">Free trial ended</p>
-              <p className="text-xs text-amber-600 mt-0.5">
-                {trialTimeExpired
-                  ? `Your 14-day trial has expired.`
-                  : `You've used all ${trialDeliveriesLimit} trial deliveries.`}{" "}
-                Contact us to upgrade.
-              </p>
-            </div>
-            <a
-              href="mailto:hellopeleka@gmail.com"
-              className="text-xs font-semibold px-3 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-700 shrink-0"
+            {/* New Delivery — hidden on mobile (use FAB) */}
+            <button
+              onClick={() => setShowNewDelivery(true)}
+              className="hidden sm:flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition-colors"
             >
-              Upgrade
-            </a>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              New Delivery
+            </button>
           </div>
-        )}
+        </header>
 
-        {/* ── Metric blocks ── */}
-        {!loading && (
-          <div className="flex flex-wrap gap-3">
-            <MetricBlock label="Orders Today" value={ordersToday} color="gray" />
-            <MetricBlock label="Unassigned" value={unassigned.length} color="blue" />
-            <MetricBlock label="Dispatched Right Now" value={dispatched.length} color="amber" />
-            <MetricBlock
-              label="Delivered" value={deliveredFiltered.length} color="green"
-              period={deliveredPeriod} onPeriodChange={setDeliveredPeriod}
-            />
-            <MetricBlock
-              label="Cancelled" value={cancelledFiltered.length} color="red"
-              period={cancelledPeriod} onPeriodChange={setCancelledPeriod}
-            />
-          </div>
-        )}
-
-        {loading && (
-          <div className="flex items-center justify-center py-16">
-            <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-          </div>
-        )}
-
-        {!loading && (
-          <>
-            {/* ── Tab switcher ── */}
-            <div className="flex border-b border-gray-200 -mb-3">
-              {(["deliveries", "feedback"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px
-                    ${activeTab === tab
-                      ? "border-blue-600 text-blue-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"}`}
-                >
-                  {tab === "deliveries" ? "Deliveries" : "Feedback"}
-                </button>
-              ))}
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto pb-16 lg:pb-6">
+          {activeView === "feedback" ? (
+            <div className="px-4 sm:px-6 py-6 max-w-4xl">
+              {loading ? (
+                <div className="flex justify-center py-16">
+                  <div className="w-6 h-6 rounded-full border-2 border-green-600 border-t-transparent animate-spin" />
+                </div>
+              ) : (
+                <FeedbackTab uid={uid} deliveries={deliveries} flagThreshold={flagThreshold} />
+              )}
             </div>
+          ) : (
+            <div className="px-4 sm:px-6 py-5 flex flex-col gap-5 max-w-5xl">
 
-            {activeTab === "feedback" && (
-              <FeedbackTab uid={uid} deliveries={deliveries} flagThreshold={flagThreshold} />
-            )}
+              {/* Checklist */}
+              {!loading && showChecklist && (
+                <ActivationChecklist
+                  riderAdded={ridersCount > 0}
+                  firstDeliveryCreated={deliveries.length > 0}
+                  firstDispatched={firstDispatched}
+                  onCreateDelivery={() => setShowNewDelivery(true)}
+                  onScrollToRiders={() => router.push("/riders")}
+                  onDismiss={() => {
+                    setChecklistDismissed(true);
+                    set(ref(db, `businesses/${uid}/profile/checklistDismissed`), true).catch(() => {});
+                  }}
+                />
+              )}
 
-            {activeTab === "deliveries" && (
-              <>
-                {/* ── Active Right Now ── */}
-                <section className="flex flex-col gap-3">
-                  <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
-                    Active Right Now
-                    <span className="flex items-center gap-1 text-xs font-normal text-amber-600 normal-case">
-                      <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              {/* Trial counter */}
+              {!loading && trialDeliveriesLimit > 0 && !trialExhausted && (
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-5 py-3.5">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-xs font-medium text-gray-700">Free trial</p>
+                    <p className="text-xs text-gray-500">
+                      {trialDeliveriesUsed} of {trialDeliveriesLimit} deliveries used
+                      {trialStartDate > 0 && (
+                        <span className={trialDaysRemaining <= 3 ? " text-amber-600 font-medium" : ""}>
+                          {" "}· {trialDaysRemaining} day{trialDaysRemaining !== 1 ? "s" : ""} left
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-1.5">
+                    <div className={`h-1.5 rounded-full transition-all ${trialDaysRemaining <= 3 ? "bg-amber-500" : "bg-green-500"}`}
+                      style={{ width: `${Math.min(100, (trialDeliveriesUsed / trialDeliveriesLimit) * 100)}%` }} />
+                  </div>
+                </div>
+              )}
+              {!loading && trialExhausted && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-5 py-3.5 flex items-center gap-3">
+                  <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-amber-800">Free trial ended</p>
+                    <p className="text-xs text-amber-600 mt-0.5">
+                      {trialTimeExpired ? "Your 14-day trial has expired." : `You've used all ${trialDeliveriesLimit} trial deliveries.`}{" "}
+                      <a href="mailto:hellopeleka@gmail.com" className="underline">Contact us to upgrade.</a>
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Metrics */}
+              {loading ? (
+                <div className="flex justify-center py-12">
+                  <div className="w-6 h-6 rounded-full border-2 border-green-600 border-t-transparent animate-spin" />
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  <MetricBlock label="Orders Today" value={ordersToday} />
+                  <MetricBlock label="Unassigned" value={unassigned.length} />
+                  <MetricBlock label="Dispatched" value={dispatched.length} />
+                  <MetricBlock label="Delivered" value={deliveredFiltered.length}
+                    period={deliveredPeriod} onPeriodChange={setDeliveredPeriod} />
+                  <MetricBlock label="Cancelled" value={cancelledFiltered.length}
+                    period={cancelledPeriod} onPeriodChange={setCancelledPeriod} />
+                </div>
+              )}
+
+              {/* Active Right Now */}
+              {!loading && dispatched.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-3">
+                    <h2 className="text-sm font-semibold text-gray-900">Active Right Now</h2>
+                    <span className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
                       {dispatched.length} live
                     </span>
-                  </h2>
-
-                  {dispatched.length === 0 ? (
-                    <p className="text-sm text-gray-400 py-4 text-center">No active deliveries right now</p>
-                  ) : (
-                    <>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {dispatched.slice(0, PAGE_SIZE).map((d) => (
-                          <button
-                            key={d.id}
-                            onClick={() => setActivePanel(d)}
-                            className="bg-white rounded-xl border border-amber-200 p-4 flex flex-col gap-2 shadow-sm text-left hover:border-amber-400 hover:shadow-md transition-all"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="font-semibold text-gray-900 text-sm leading-tight truncate">{d.customerName}</p>
-                              <StatusBadge status="dispatched" />
-                            </div>
-                            <p className="text-xs text-gray-500 leading-snug">{d.deliveryAddress}</p>
-                            {d.riderName && (
-                              <p className="text-xs text-gray-600 flex items-center gap-1">
-                                <svg className="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                                </svg>
-                                {d.riderName}
-                              </p>
-                            )}
-                            {d.dispatchedAt && (
-                              <p className="text-xs text-gray-400">Dispatched {fmtDateTime(d.dispatchedAt)}</p>
-                            )}
-                            <p className="text-xs text-blue-600 font-medium mt-0.5">Tap to view live map →</p>
-                          </button>
-                        ))}
-                      </div>
-                      {dispatched.length > PAGE_SIZE && (
-                        <p className="text-xs text-gray-400 text-center">
-                          +{dispatched.length - PAGE_SIZE} more — see Dispatched section below
-                        </p>
-                      )}
-                    </>
-                  )}
-
-                  {/* This month summary */}
-                  <div className="flex items-center gap-6 bg-white rounded-xl border border-gray-200 px-5 py-3 shadow-sm mt-1">
-                    <div>
-                      <p className="text-xs text-gray-500">This Month — Total</p>
-                      <p className="text-lg font-bold text-gray-900">{thisMonthTotal}</p>
-                    </div>
-                    <div className="w-px h-8 bg-gray-100" />
-                    <div>
-                      <p className="text-xs text-gray-500">Delivered</p>
-                      <p className="text-lg font-bold text-green-600">{thisMonthDelivered}</p>
-                    </div>
-                    <div className="w-px h-8 bg-gray-100" />
-                    <div>
-                      <p className="text-xs text-gray-500">Failed</p>
-                      <p className="text-lg font-bold text-red-500">{thisMonthFailed}</p>
-                    </div>
-                    <div className="w-px h-8 bg-gray-100" />
-                    <div>
-                      <p className="text-xs text-gray-500">Pending</p>
-                      <p className="text-lg font-bold text-amber-600">
-                        {unassigned.length + assigned.length + dispatched.length}
-                      </p>
-                    </div>
+                  </div>
+                  <div className="flex gap-3 overflow-x-auto pb-1 sm:grid sm:grid-cols-2 lg:grid-cols-3">
+                    {dispatched.map((d) => (
+                      <button key={d.id} onClick={() => setActivePanel(d)}
+                        className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 flex flex-col gap-2 text-left hover:border-green-400 hover:shadow-md transition-all shrink-0 w-64 sm:w-auto">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-gray-900 text-sm truncate">{d.customerName}</p>
+                          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 shrink-0">Live</span>
+                        </div>
+                        <p className="text-xs text-gray-500 leading-snug line-clamp-2">{d.deliveryAddress}</p>
+                        {d.riderName && <p className="text-xs text-gray-600">{d.riderName}</p>}
+                        <p className="text-xs text-green-600 font-medium">View map →</p>
+                      </button>
+                    ))}
                   </div>
                 </section>
+              )}
 
-                {/* ── Five management sections ── */}
-                <UnassignedSection
-                  deliveries={unassigned} uid={uid}
-                  businessName={businessName}
-                />
-                <AssignedSection
-                  deliveries={assigned} uid={uid} businessName={businessName}
-                />
-                <DispatchedSection
-                  deliveries={dispatched} uid={uid}
-                  businessName={businessName} businessPhone={businessPhone}
-                />
-                <DeliveredSection
-                  deliveries={delivered} uid={uid}
-                  feedbackReceivedIds={feedbackReceivedIds}
-                  notifications={notifications}
-                  feedbackDelay={feedbackDelay}
-                />
-                <FailedSection deliveries={failed} />
-              </>
-            )}
-          </>
-        )}
-      </main>
+              {/* Section tabs */}
+              {!loading && (
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                  {/* Tab bar */}
+                  <div className="flex overflow-x-auto border-b border-gray-200">
+                    {sectionTabs.map((s) => (
+                      <button key={s.key} onClick={() => setActiveSection(s.key)}
+                        className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-px
+                          ${activeSection === s.key
+                            ? "border-green-600 text-green-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700"}`}>
+                        {s.label}
+                        {s.count > 0 && (
+                          <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium
+                            ${activeSection === s.key ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                            {s.count}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Section content */}
+                  {activeSection === "unassigned" && (
+                    <UnassignedSection deliveries={unassigned} uid={uid} businessName={businessName} />
+                  )}
+                  {activeSection === "assigned" && (
+                    <AssignedSection deliveries={assigned} uid={uid} businessName={businessName} />
+                  )}
+                  {activeSection === "dispatched" && (
+                    <DispatchedSection deliveries={dispatched} uid={uid} businessName={businessName} businessPhone={businessPhone} />
+                  )}
+                  {activeSection === "delivered" && (
+                    <DeliveredSection deliveries={delivered} uid={uid}
+                      feedbackReceivedIds={feedbackReceivedIds} notifications={notifications} feedbackDelay={feedbackDelay} />
+                  )}
+                  {activeSection === "failed" && (
+                    <FailedSection deliveries={failed} />
+                  )}
+                </div>
+              )}
 
-      {/* Active delivery slide-up panel */}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Mobile FAB */}
+      <button
+        onClick={() => setShowNewDelivery(true)}
+        className="sm:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-green-600 text-white shadow-lg flex items-center justify-center hover:bg-green-700"
+        aria-label="New Delivery"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+      </button>
+
+      {/* Panels & modals */}
+      {showNewDelivery && (
+        <NewDeliveryPanel uid={uid} onClose={() => setShowNewDelivery(false)} trialExhausted={trialExhausted} />
+      )}
       {activePanel && (
         <ActiveDeliveryPanel delivery={activePanel} onClose={() => setActivePanel(null)} />
       )}
