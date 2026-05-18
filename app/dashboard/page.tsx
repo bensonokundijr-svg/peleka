@@ -506,6 +506,117 @@ function ActiveDeliveryPanel({
   );
 }
 
+// ─── Route order modal ────────────────────────────────────────────────────────
+
+function RouteOrderModal({
+  deliveries, onConfirm, onClose,
+}: {
+  deliveries: Delivery[];
+  onConfirm: (ordered: Delivery[]) => void;
+  onClose: () => void;
+}) {
+  const [order, setOrder] = useState<Delivery[]>(deliveries);
+  const dragIndex = useRef<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  function handleDragStart(i: number) {
+    dragIndex.current = i;
+  }
+
+  function handleDragOver(e: React.DragEvent, i: number) {
+    e.preventDefault();
+    setDragOver(i);
+    const from = dragIndex.current;
+    if (from === null || from === i) return;
+    setOrder((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(i, 0, item);
+      return next;
+    });
+    dragIndex.current = i;
+  }
+
+  function handleDragEnd() {
+    dragIndex.current = null;
+    setDragOver(null);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col gap-5 p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">Set delivery order</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Drag to reorder stops</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {order.map((d, i) => (
+            <div
+              key={d.id}
+              draggable
+              onDragStart={() => handleDragStart(i)}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDragEnd={handleDragEnd}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors select-none
+                ${dragOver === i && dragIndex.current !== i
+                  ? "border-blue-400 bg-blue-50"
+                  : "border-gray-200 bg-gray-50"}`}
+            >
+              <span className="text-gray-400 cursor-grab active:cursor-grabbing text-lg leading-none shrink-0" aria-hidden>⠿</span>
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                {i + 1}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{d.customerName}</p>
+                <p className="text-xs text-gray-500 truncate">{d.deliveryAddress}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-3 pt-1">
+          <div className="relative flex-1 group">
+            <button
+              disabled
+              className="w-full py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-400 cursor-not-allowed"
+            >
+              Suggest Optimal Route
+            </button>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block">
+              <div className="bg-gray-800 text-white text-xs rounded-lg px-2.5 py-1.5 whitespace-nowrap">
+                Coming soon
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => onConfirm(order)}
+            className="flex-1 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
+          >
+            Confirm Order
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── UNASSIGNED section ───────────────────────────────────────────────────────
 
 function UnassignedSection({
@@ -515,6 +626,8 @@ function UnassignedSection({
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [singleAssign, setSingleAssign] = useState<Delivery | null>(null);
+  const [showOrderStep, setShowOrderStep] = useState(false);
+  const [orderedBatch, setOrderedBatch] = useState<Delivery[]>([]);
   const [showBatch, setShowBatch] = useState(false);
 
   function toggle(id: string) {
@@ -523,6 +636,18 @@ function UnassignedSection({
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  }
+
+  function handleOpenOrderStep() {
+    const batch = deliveries.filter((d) => selected.has(d.id));
+    setOrderedBatch(batch);
+    setShowOrderStep(true);
+  }
+
+  function handleOrderConfirm(ordered: Delivery[]) {
+    setOrderedBatch(ordered);
+    setShowOrderStep(false);
+    setShowBatch(true);
   }
 
   async function handleSingleAssign(rider: Rider) {
@@ -546,8 +671,7 @@ function UnassignedSection({
   }
 
   async function handleBatchAssign(rider: Rider) {
-    const ids = Array.from(selected);
-    const batch = deliveries.filter((d) => ids.includes(d.id));
+    const batch = orderedBatch;
     const queueSize = batch.length;
 
     const queue = batch.map((d) => ({
@@ -592,6 +716,7 @@ function UnassignedSection({
     });
 
     setSelected(new Set());
+    setOrderedBatch([]);
     setShowBatch(false);
   }
 
@@ -613,7 +738,7 @@ function UnassignedSection({
                 Clear
               </button>
               <button
-                onClick={() => setShowBatch(true)}
+                onClick={handleOpenOrderStep}
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
               >
                 Assign Selected
@@ -674,9 +799,16 @@ function UnassignedSection({
           onClose={() => setSingleAssign(null)}
         />
       )}
+      {showOrderStep && (
+        <RouteOrderModal
+          deliveries={orderedBatch}
+          onConfirm={handleOrderConfirm}
+          onClose={() => setShowOrderStep(false)}
+        />
+      )}
       {showBatch && (
         <AssignModal
-          title={`Batch assign ${selected.size} deliveries`}
+          title={`Assign ${orderedBatch.length} stops`}
           onConfirm={handleBatchAssign}
           onClose={() => setShowBatch(false)}
         />
@@ -1529,7 +1661,11 @@ function CustomerSearch({
 
 const EMPTY_FORM = { customerName: "", customerPhone: "", deliveryAddress: "", notes: "" };
 
-function CreateForm() {
+function CreateForm({ openSignal, trialExhausted, planName: planDisplayName }: {
+  openSignal?: number;
+  trialExhausted?: boolean;
+  planName?: string;
+}) {
   const { user } = useAuth();
   const uid = user!.uid;
   const [open, setOpen] = useState(false);
@@ -1537,6 +1673,16 @@ function CreateForm() {
   const [addressCoords, setAddressCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  const prevSignal = useRef(openSignal ?? 0);
+
+  useEffect(() => {
+    if (openSignal !== undefined && openSignal > prevSignal.current) {
+      setOpen(true);
+      prevSignal.current = openSignal;
+    }
+  }, [openSignal]);
+
+  void planDisplayName;
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setFields((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -1625,10 +1771,18 @@ function CreateForm() {
             <textarea name="notes" value={fields.notes} onChange={handleChange} placeholder="Leave at gate, call on arrival…" rows={2} className="resize-none" />
           </Field>
 
+          {trialExhausted && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+              Trial deliveries used up — contact us to upgrade.
+            </div>
+          )}
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={!canSubmit || submitting}
+              disabled={!canSubmit || submitting || !!trialExhausted}
               className="px-6 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? "Saving…" : "Create Delivery"}
@@ -1770,6 +1924,114 @@ function RidersSection() {
   );
 }
 
+// ─── Activation checklist ─────────────────────────────────────────────────────
+
+function ActivationChecklist({
+  riderAdded, firstDeliveryCreated, firstDispatched,
+  onCreateDelivery, onScrollToRiders, onDismiss,
+}: {
+  riderAdded: boolean;
+  firstDeliveryCreated: boolean;
+  firstDispatched: boolean;
+  onCreateDelivery: () => void;
+  onScrollToRiders: () => void;
+  onDismiss: () => void;
+}) {
+  const tasks = [
+    {
+      done: true,
+      label: "Set up your business",
+      description: "Profile and onboarding complete",
+      action: null as (() => void) | null,
+      actionLabel: "",
+    },
+    {
+      done: riderAdded,
+      label: "Add your first rider",
+      description: "Riders receive delivery routes on their phone",
+      action: onScrollToRiders,
+      actionLabel: "Add rider",
+    },
+    {
+      done: firstDeliveryCreated,
+      label: "Create your first delivery",
+      description: "Add a customer order to the queue",
+      action: onCreateDelivery,
+      actionLabel: "Create delivery",
+    },
+    {
+      done: firstDispatched,
+      label: "Dispatch your first delivery",
+      description: "Assign a rider and send it out",
+      action: null,
+      actionLabel: "",
+    },
+  ];
+
+  const completedCount = tasks.filter((t) => t.done).length;
+  const allDone = completedCount === tasks.length;
+  const [fadingOut, setFadingOut] = useState(false);
+
+  useEffect(() => {
+    if (!allDone) return;
+    setFadingOut(true);
+    const t = setTimeout(onDismiss, 2000);
+    return () => clearTimeout(t);
+  }, [allDone, onDismiss]);
+
+  return (
+    <div
+      className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4 transition-opacity duration-[2000ms]"
+      style={{ opacity: fadingOut ? 0 : 1 }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">Get started</h2>
+          <p className="text-xs text-gray-500 mt-0.5">{completedCount} of {tasks.length} complete</p>
+        </div>
+        <button onClick={onDismiss} className="text-xs text-gray-400 hover:text-gray-600 shrink-0">
+          Dismiss
+        </button>
+      </div>
+      <div className="flex flex-col gap-2">
+        {tasks.map((task, i) => (
+          <div
+            key={i}
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors
+              ${task.done ? "border-green-200 bg-green-50" : "border-gray-200"}`}
+          >
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-colors
+              ${task.done ? "bg-green-500" : "bg-gray-100"}`}>
+              {task.done ? (
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
+              ) : (
+                <span className="text-[10px] text-gray-400 font-bold">{i + 1}</span>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-medium leading-tight
+                ${task.done ? "text-green-800 line-through decoration-green-400" : "text-gray-900"}`}>
+                {task.label}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">{task.description}</p>
+            </div>
+            {!task.done && task.action && (
+              <button
+                onClick={task.action}
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 shrink-0"
+              >
+                {task.actionLabel}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard page ───────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -1788,17 +2050,30 @@ export default function DashboardPage() {
   const [feedbackReceivedIds, setFeedbackReceivedIds] = useState<Set<string>>(new Set());
   const [flagThreshold, setFlagThreshold] = useState(3);
   const [feedbackDelay, setFeedbackDelay] = useState(120);
+  const [trialDeliveriesLimit, setTrialDeliveriesLimit] = useState(25);
+  const [planName, setPlanName] = useState("");
+  const [checklistDismissed, setChecklistDismissed] = useState(false);
+  const [ridersCount, setRidersCount] = useState(0);
+  const [createFormSignal, setCreateFormSignal] = useState(0);
+  const ridersRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!user) return;
     return onValue(ref(db, `businesses/${user.uid}/profile`), (snap) => {
       const v = snap.val();
-      setBusinessName(v?.businessName ?? "");
-      setBusinessPhone(v?.phone ?? "");
-      setFlagThreshold(v?.flagThreshold ?? 3);
-      setFeedbackDelay(v?.feedbackDelay ?? 120);
+      if (!v || !v.onboardingComplete) {
+        router.replace("/onboarding");
+        return;
+      }
+      setBusinessName(v.businessName ?? "");
+      setBusinessPhone(v.phone ?? "");
+      setFlagThreshold(v.flagThreshold ?? 3);
+      setFeedbackDelay(v.feedbackDelay ?? 120);
+      setTrialDeliveriesLimit(v.trialDeliveriesLimit ?? 25);
+      setPlanName(v.planName ?? "");
+      setChecklistDismissed(v.checklistDismissed ?? false);
     });
-  }, [user]);
+  }, [user, router]);
 
   useEffect(() => {
     if (!user) return;
@@ -1813,6 +2088,14 @@ export default function DashboardPage() {
     return onValue(ref(db, `businesses/${user.uid}/notifications`), (snap) => {
       const data = snap.val() as Record<string, Omit<NotificationEntry, "id">> | null;
       setNotifications(data ? Object.entries(data).map(([id, v]) => ({ id, ...v })) : []);
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    return onValue(ref(db, `riders-list/${user.uid}`), (snap) => {
+      const data = snap.val() as Record<string, unknown> | null;
+      setRidersCount(data ? Object.keys(data).length : 0);
     });
   }, [user]);
 
@@ -1842,6 +2125,13 @@ export default function DashboardPage() {
   if (!user) return null;
 
   const uid = user.uid;
+
+  // Trial + checklist computations
+  const trialDeliveriesUsed = deliveries.length;
+  const trialRemaining = Math.max(0, trialDeliveriesLimit - trialDeliveriesUsed);
+  const trialExhausted = trialDeliveriesUsed >= trialDeliveriesLimit;
+  const firstDispatched = deliveries.some((d) => d.status === "dispatched" || d.status === "delivered" || d.status === "failed");
+  const showChecklist = !checklistDismissed;
 
   // Partition deliveries
   const unassigned = deliveries.filter((d) => d.status === "unassigned");
@@ -1917,9 +2207,61 @@ export default function DashboardPage() {
 
         {/* Create + Riders (collapsible) */}
         <div className="flex flex-col gap-3">
-          <CreateForm />
-          <RidersSection />
+          <CreateForm openSignal={createFormSignal} trialExhausted={trialExhausted} planName={planName} />
+          <div ref={ridersRef}>
+            <RidersSection />
+          </div>
         </div>
+
+        {/* Activation checklist */}
+        {!loading && showChecklist && (
+          <ActivationChecklist
+            riderAdded={ridersCount > 0}
+            firstDeliveryCreated={deliveries.length > 0}
+            firstDispatched={firstDispatched}
+            onCreateDelivery={() => setCreateFormSignal((v) => v + 1)}
+            onScrollToRiders={() => ridersRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            onDismiss={() => {
+              setChecklistDismissed(true);
+              set(ref(db, `businesses/${uid}/profile/checklistDismissed`), true).catch(() => {});
+            }}
+          />
+        )}
+
+        {/* Trial delivery counter */}
+        {!loading && trialDeliveriesLimit > 0 && !trialExhausted && (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-xs font-medium text-gray-700">Trial deliveries</p>
+              <p className="text-xs text-gray-500">{trialRemaining} of {trialDeliveriesLimit} remaining</p>
+            </div>
+            <div className="w-full bg-gray-100 rounded-full h-1.5">
+              <div
+                className="bg-blue-500 h-1.5 rounded-full transition-all"
+                style={{ width: `${Math.min(100, (trialDeliveriesUsed / trialDeliveriesLimit) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+        {!loading && trialExhausted && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 flex items-center gap-3">
+            <svg className="w-5 h-5 text-amber-500 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">Trial deliveries exhausted</p>
+              <p className="text-xs text-amber-600 mt-0.5">
+                You&apos;ve used all {trialDeliveriesLimit} trial deliveries. Contact us to upgrade.
+              </p>
+            </div>
+            <a
+              href="mailto:hellopeleka@gmail.com"
+              className="text-xs font-semibold px-3 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-700 shrink-0"
+            >
+              Upgrade
+            </a>
+          </div>
+        )}
 
         {/* ── Metric blocks ── */}
         {!loading && (
