@@ -1776,7 +1776,7 @@ function CreateForm({ openSignal, trialExhausted, planName: planDisplayName }: {
               <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
               </svg>
-              Trial deliveries used up — contact us to upgrade.
+              Free trial ended — contact us to upgrade.
             </div>
           )}
           <div className="flex justify-end">
@@ -1796,7 +1796,7 @@ function CreateForm({ openSignal, trialExhausted, planName: planDisplayName }: {
 
 // ─── Riders section ───────────────────────────────────────────────────────────
 
-function RidersSection() {
+function RidersSection({ expandSignal }: { expandSignal?: number }) {
   const { user } = useAuth();
   const uid = user!.uid;
   const [riders, setRiders] = useState<Rider[]>([]);
@@ -1807,6 +1807,14 @@ function RidersSection() {
   const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const prevExpandSignal = useRef(expandSignal ?? 0);
+
+  useEffect(() => {
+    if (expandSignal !== undefined && expandSignal > prevExpandSignal.current) {
+      setOpen(true);
+      prevExpandSignal.current = expandSignal;
+    }
+  }, [expandSignal]);
 
   useEffect(() => {
     const unsub = onValue(ref(db, `riders-list/${uid}`), (snap) => {
@@ -2050,11 +2058,14 @@ export default function DashboardPage() {
   const [feedbackReceivedIds, setFeedbackReceivedIds] = useState<Set<string>>(new Set());
   const [flagThreshold, setFlagThreshold] = useState(3);
   const [feedbackDelay, setFeedbackDelay] = useState(120);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [trialDeliveriesLimit, setTrialDeliveriesLimit] = useState(25);
+  const [trialStartDate, setTrialStartDate] = useState(0);
   const [planName, setPlanName] = useState("");
   const [checklistDismissed, setChecklistDismissed] = useState(false);
   const [ridersCount, setRidersCount] = useState(0);
   const [createFormSignal, setCreateFormSignal] = useState(0);
+  const [ridersExpandSignal, setRidersExpandSignal] = useState(0);
   const ridersRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -2070,8 +2081,10 @@ export default function DashboardPage() {
       setFlagThreshold(v.flagThreshold ?? 3);
       setFeedbackDelay(v.feedbackDelay ?? 120);
       setTrialDeliveriesLimit(v.trialDeliveriesLimit ?? 25);
+      setTrialStartDate(v.trialStartDate ?? 0);
       setPlanName(v.planName ?? "");
       setChecklistDismissed(v.checklistDismissed ?? false);
+      setProfileLoaded(true);
     });
   }, [user, router]);
 
@@ -2115,7 +2128,7 @@ export default function DashboardPage() {
     return unsub;
   }, [user, authLoading, router]);
 
-  if (authLoading) {
+  if (authLoading || (!!user && !profileLoaded)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
@@ -2127,9 +2140,13 @@ export default function DashboardPage() {
   const uid = user.uid;
 
   // Trial + checklist computations
+  const TRIAL_DAYS = 14;
   const trialDeliveriesUsed = deliveries.length;
-  const trialRemaining = Math.max(0, trialDeliveriesLimit - trialDeliveriesUsed);
-  const trialExhausted = trialDeliveriesUsed >= trialDeliveriesLimit;
+  const trialDeliveriesRemaining = Math.max(0, trialDeliveriesLimit - trialDeliveriesUsed);
+  const trialDaysElapsed = trialStartDate > 0 ? Math.floor((Date.now() - trialStartDate) / 86_400_000) : 0;
+  const trialDaysRemaining = Math.max(0, TRIAL_DAYS - trialDaysElapsed);
+  const trialTimeExpired = trialStartDate > 0 && Date.now() > trialStartDate + TRIAL_DAYS * 86_400_000;
+  const trialExhausted = trialDeliveriesUsed >= trialDeliveriesLimit || trialTimeExpired;
   const firstDispatched = deliveries.some((d) => d.status === "dispatched" || d.status === "delivered" || d.status === "failed");
   const showChecklist = !checklistDismissed;
 
@@ -2209,7 +2226,7 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-3">
           <CreateForm openSignal={createFormSignal} trialExhausted={trialExhausted} planName={planName} />
           <div ref={ridersRef}>
-            <RidersSection />
+            <RidersSection expandSignal={ridersExpandSignal} />
           </div>
         </div>
 
@@ -2219,8 +2236,14 @@ export default function DashboardPage() {
             riderAdded={ridersCount > 0}
             firstDeliveryCreated={deliveries.length > 0}
             firstDispatched={firstDispatched}
-            onCreateDelivery={() => setCreateFormSignal((v) => v + 1)}
-            onScrollToRiders={() => ridersRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            onCreateDelivery={() => {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+              setTimeout(() => setCreateFormSignal((v) => v + 1), 200);
+            }}
+            onScrollToRiders={() => {
+              setRidersExpandSignal((v) => v + 1);
+              setTimeout(() => ridersRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+            }}
             onDismiss={() => {
               setChecklistDismissed(true);
               set(ref(db, `businesses/${uid}/profile/checklistDismissed`), true).catch(() => {});
@@ -2228,16 +2251,23 @@ export default function DashboardPage() {
           />
         )}
 
-        {/* Trial delivery counter */}
+        {/* Trial counter */}
         {!loading && trialDeliveriesLimit > 0 && !trialExhausted && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
             <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-xs font-medium text-gray-700">Trial deliveries</p>
-              <p className="text-xs text-gray-500">{trialRemaining} of {trialDeliveriesLimit} remaining</p>
+              <p className="text-xs font-medium text-gray-700">Free trial</p>
+              <p className="text-xs text-gray-500">
+                {trialDeliveriesUsed} of {trialDeliveriesLimit} deliveries used
+                {trialStartDate > 0 && (
+                  <span className={trialDaysRemaining <= 3 ? " · text-amber-600 font-medium" : ""}>
+                    {" "}· {trialDaysRemaining} day{trialDaysRemaining !== 1 ? "s" : ""} left
+                  </span>
+                )}
+              </p>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-1.5">
               <div
-                className="bg-blue-500 h-1.5 rounded-full transition-all"
+                className={`h-1.5 rounded-full transition-all ${trialDaysRemaining <= 3 ? "bg-amber-500" : "bg-blue-500"}`}
                 style={{ width: `${Math.min(100, (trialDeliveriesUsed / trialDeliveriesLimit) * 100)}%` }}
               />
             </div>
@@ -2249,9 +2279,12 @@ export default function DashboardPage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
             </svg>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-amber-800">Trial deliveries exhausted</p>
+              <p className="text-sm font-semibold text-amber-800">Free trial ended</p>
               <p className="text-xs text-amber-600 mt-0.5">
-                You&apos;ve used all {trialDeliveriesLimit} trial deliveries. Contact us to upgrade.
+                {trialTimeExpired
+                  ? `Your 14-day trial has expired.`
+                  : `You've used all ${trialDeliveriesLimit} trial deliveries.`}{" "}
+                Contact us to upgrade.
               </p>
             </div>
             <a

@@ -213,6 +213,7 @@ export default function OnboardingPage() {
         selectedPlan,
         planName: plan.name,
         trialDeliveriesLimit: 25,
+        trialStartDate: Date.now(),
         onboardingComplete: true,
         checklistDismissed: false,
       });
