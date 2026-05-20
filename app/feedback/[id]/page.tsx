@@ -5,38 +5,71 @@ import { useParams } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { ref, get, set } from "firebase/database";
 
-// ─── Star rating ──────────────────────────────────────────────────────────────
-
-function StarRating({ value, onChange }: { value: number; onChange?: (v: number) => void }) {
+// ── 44px tap-friendly star picker ────────────────────────────────────────────
+function StarPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const [hover, setHover] = useState(0);
-  const interactive = !!onChange;
+  const stars = [];
+  for (let i = 1; i <= 5; i++) {
+    const filled = (hover || value) >= i;
+    stars.push(
+      <button
+        key={i}
+        type="button"
+        onClick={() => onChange(i)}
+        onMouseEnter={() => setHover(i)}
+        onMouseLeave={() => setHover(0)}
+        aria-label={i + " star" + (i === 1 ? "" : "s")}
+        style={{
+          border: 0, background: "transparent", padding: 4, cursor: "pointer",
+          color: filled ? "#f59e0b" : "#cbd5e1",
+          transition: "transform .1s, color .15s",
+        }}
+        onMouseDown={(e) => { e.currentTarget.style.transform = "scale(0.9)"; }}
+        onMouseUp={(e) => { e.currentTarget.style.transform = ""; }}
+      >
+        <svg width={44} height={44} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+          <path d="M12 2l3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>
+        </svg>
+      </button>
+    );
+  }
   return (
-    <div className="flex gap-1">
-      {[1, 2, 3, 4, 5].map((star) => (
-        <button
-          key={star}
-          type="button"
-          disabled={!interactive}
-          onClick={() => onChange?.(star)}
-          onMouseEnter={() => interactive && setHover(star)}
-          onMouseLeave={() => interactive && setHover(0)}
-          className={`text-2xl leading-none transition-colors ${interactive ? "cursor-pointer" : "cursor-default"}`}
-          aria-label={`${star} star`}
-        >
-          <span className={(hover || value) >= star ? "text-amber-400" : "text-gray-200"}>★</span>
-        </button>
-      ))}
+    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
+      {stars}
     </div>
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ── Brand bar ────────────────────────────────────────────────────────────────
+function BrandBar({ businessName }: { businessName: string }) {
+  return (
+    <div style={{
+      padding: "16px 22px 14px", background: "white",
+      borderBottom: "1px solid #e6ebef",
+      display: "flex", alignItems: "center", gap: 12,
+    }}>
+      <div style={{
+        width: 38, height: 38, borderRadius: 10,
+        background: "#16a34a", color: "white",
+        fontWeight: 800, fontSize: 17,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        boxShadow: "0 1px 0 rgba(255,255,255,0.4) inset, 0 1px 2px rgba(0,0,0,0.06)",
+      }}>
+        {businessName ? businessName[0].toUpperCase() : "?"}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>{businessName || "—"}</div>
+        <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Powered by Peleka</div>
+      </div>
+    </div>
+  );
+}
 
+// ── Page ─────────────────────────────────────────────────────────────────────
 export default function FeedbackPage() {
   const { id } = useParams<{ id: string }>();
   const [ownerUid, setOwnerUid] = useState<string | null>(null);
   const [businessName, setBusinessName] = useState("");
-  const [logoUrl, setLogoUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -53,48 +86,35 @@ export default function FeedbackPage() {
       const uid = indexSnap.val() as string | null;
       if (!uid) { setLoading(false); return; }
       setOwnerUid(uid);
-
       const [profileSnap, feedbackSnap] = await Promise.all([
         get(ref(db, `businesses/${uid}/profile`)),
         get(ref(db, `businesses/${uid}/feedback/${id}`)),
       ]);
-
       const profile = profileSnap.val() as { businessName?: string; logoUrl?: string } | null;
-      if (profile) {
-        setBusinessName(profile.businessName ?? "");
-        setLogoUrl(profile.logoUrl ?? "");
-      }
+      if (profile) setBusinessName(profile.businessName ?? "");
       if (feedbackSnap.exists()) setAlreadySubmitted(true);
       setLoading(false);
     }
     load();
   }, [id]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit() {
     if (!ownerUid || submitting || orderRating === 0 || deliveryRating === 0) return;
     setSubmitting(true);
     setError(null);
 
     const feedbackData: {
-      orderRating: number;
-      deliveryRating: number;
-      submittedAt: number;
-      comments?: string;
-      sentiment?: string;
-      topics?: string[];
+      orderRating: number; deliveryRating: number; submittedAt: number;
+      comments?: string; sentiment?: string; topics?: string[];
     } = {
-      orderRating,
-      deliveryRating,
-      submittedAt: Date.now(),
+      orderRating, deliveryRating, submittedAt: Date.now(),
       ...(comments.trim() ? { comments: comments.trim() } : {}),
     };
 
     if (comments.trim()) {
       try {
         const res = await fetch("/api/feedback/sentiment", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ comment: comments.trim() }),
         });
         if (res.ok) {
@@ -115,106 +135,201 @@ export default function FeedbackPage() {
     }
   }
 
+  const pageStyle = {
+    display: "flex", flexDirection: "column" as const, height: "100dvh",
+    background: "#fafbfa",
+    fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+    color: "#0c1116",
+    letterSpacing: "-0.005em",
+  };
+
+  // ── Loading ──
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+      <div style={{ ...pageStyle, alignItems: "center", justifyContent: "center" }}>
+        <div style={{
+          width: 24, height: 24, borderRadius: "50%",
+          border: "2px solid #16a34a", borderTopColor: "transparent",
+          animation: "spin 0.7s linear infinite",
+        }} />
       </div>
     );
   }
 
+  // ── Not found ──
   if (!ownerUid) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <p className="text-gray-500 text-sm text-center">Feedback link not found.</p>
+      <div style={{ ...pageStyle, alignItems: "center", justifyContent: "center", padding: "0 16px" }}>
+        <p style={{ fontSize: 14, color: "#64748b", textAlign: "center" }}>Feedback link not found.</p>
       </div>
     );
   }
 
+  // ── Thank-you (already submitted or just submitted) ──
   if (alreadySubmitted || submitted) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 text-center gap-4">
-        <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
-          <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-          </svg>
+      <div style={pageStyle}>
+        <BrandBar businessName={businessName} />
+        <div style={{
+          flex: 1, display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          padding: "32px 28px", gap: 22, textAlign: "center",
+        }}>
+          {/* Concentric celebration circles */}
+          <div style={{ position: "relative", width: 140, height: 140 }}>
+            <div style={{
+              position: "absolute", inset: 0, borderRadius: "50%",
+              background: "#f0fdf4", border: "1px solid #bbf7d0",
+            }} />
+            <div style={{ position: "absolute", inset: 18, borderRadius: "50%", background: "#dcfce7" }} />
+            <div style={{
+              position: "absolute", inset: 38, borderRadius: "50%",
+              background: "#16a34a", color: "white",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 8px 24px -4px rgba(22,163,74,0.35)",
+            }}>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="3"
+                strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12l5 5L20 7"/>
+              </svg>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em" }}>Thank you!</div>
+            <div style={{ marginTop: 10, fontSize: 14.5, color: "#64748b", lineHeight: 1.5, maxWidth: 280 }}>
+              Your feedback helps <strong style={{ color: "#0c1116" }}>{businessName}</strong> deliver better.
+            </div>
+          </div>
+
+          <div style={{
+            marginTop: 4, background: "white", border: "1px solid #e6ebef", borderRadius: 12,
+            padding: "14px 16px", fontSize: 12.5, color: "#64748b", maxWidth: 300,
+            textAlign: "left", display: "flex", gap: 10, alignItems: "flex-start",
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              style={{ flexShrink: 0, marginTop: 2 }}>
+              <path d="M12 22s-7-7.5-7-13a7 7 0 0 1 14 0c0 5.5-7 13-7 13z"/>
+              <circle cx="12" cy="9" r="2.5"/>
+            </svg>
+            <div>
+              Want real-time delivery tracking for your business too?{" "}
+              <a href="https://peleka.app" style={{ color: "#15803d", fontWeight: 600, textDecoration: "none" }}>
+                Learn about Peleka →
+              </a>
+            </div>
+          </div>
         </div>
-        <div>
-          <p className="text-xl font-semibold text-gray-900">Thank you for your feedback!</p>
-          <p className="text-sm text-gray-500 mt-1">Your response has been recorded.</p>
+        <div style={{ padding: "0 22px 22px", color: "#94a3b8", fontSize: 11, textAlign: "center" }}>
+          You can close this window.
         </div>
       </div>
     );
   }
 
+  // ── Form ──
+  const valid = orderRating > 0 && deliveryRating > 0;
+  const orderLabels = [
+    "", "We're sorry to hear that", "We can do better",
+    "Thanks for the honest feedback", "Glad you liked it!", "Amazing! Thank you ★",
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10 px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-6">
-        {/* Business header */}
-        <div className="flex flex-col items-center gap-3 text-center">
-          {logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt={businessName} className="w-16 h-16 rounded-xl object-cover border border-gray-100" />
-          ) : (
-            <div className="w-16 h-16 rounded-xl bg-blue-600 flex items-center justify-center">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
-              </svg>
-            </div>
-          )}
-          <div>
-            <h1 className="text-lg font-bold text-gray-900 leading-tight">
-              {businessName ? `Rate your experience with ${businessName}` : "Rate Your Delivery"}
-            </h1>
-            <p className="text-sm text-gray-500 mt-0.5">Takes less than a minute</p>
+    <div style={pageStyle}>
+      <BrandBar businessName={businessName} />
+
+      {/* Scrollable body */}
+      <div style={{
+        flex: 1, overflowY: "auto", padding: "22px 22px 18px",
+        display: "flex", flexDirection: "column", gap: 24,
+      }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+            Rate your experience with {businessName}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 14, color: "#64748b", lineHeight: 1.45 }}>
+            Takes less than a minute. Your feedback helps us improve.
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-gray-700">How was your order?</p>
-            <StarRating value={orderRating} onChange={setOrderRating} />
-            {orderRating === 0 && (
-              <p className="text-xs text-gray-400">Tap a star to rate</p>
-            )}
+        {/* Order rating */}
+        <div style={{ background: "white", border: "1px solid #e6ebef", borderRadius: 14, padding: 18 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>How was your order?</div>
+          <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 3 }}>Quality of what you received</div>
+          <StarPicker value={orderRating} onChange={setOrderRating} />
+          {orderRating > 0 && (
+            <div style={{ marginTop: 10, fontSize: 12.5, color: "#15803d", textAlign: "center", fontWeight: 500 }}>
+              {orderLabels[orderRating]}
+            </div>
+          )}
+        </div>
+
+        {/* Delivery rating */}
+        <div style={{ background: "white", border: "1px solid #e6ebef", borderRadius: 14, padding: 18 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>How was the delivery?</div>
+          <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 3 }}>Rider, timing, condition on arrival</div>
+          <StarPicker value={deliveryRating} onChange={setDeliveryRating} />
+        </div>
+
+        {/* Comment */}
+        <div style={{ background: "white", border: "1px solid #e6ebef", borderRadius: 14, padding: 18 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Anything else you&apos;d like to share?</div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>Optional</div>
+          <textarea
+            value={comments}
+            onChange={(e) => setComments(e.target.value)}
+            placeholder="Tell us what went well, or what we could improve…"
+            rows={4}
+            style={{
+              marginTop: 12, width: "100%", boxSizing: "border-box",
+              padding: "11px 12px", border: "1px solid #e6ebef", borderRadius: 9,
+              font: "inherit", fontSize: 13.5, resize: "none", outline: "none",
+              transition: "border-color .12s, box-shadow .12s",
+              background: "#fafbfa",
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = "#16a34a";
+              e.currentTarget.style.boxShadow = "0 0 0 3px rgba(22,163,74,0.12)";
+              e.currentTarget.style.background = "white";
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = "#e6ebef";
+              e.currentTarget.style.boxShadow = "";
+              e.currentTarget.style.background = "#fafbfa";
+            }}
+          />
+        </div>
+
+        {error && (
+          <div style={{
+            fontSize: 13, color: "#b91c1c", padding: "10px 14px",
+            background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca",
+          }}>
+            {error}
           </div>
+        )}
+      </div>
 
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-gray-700">How was the delivery?</p>
-            <StarRating value={deliveryRating} onChange={setDeliveryRating} />
-            {deliveryRating === 0 && (
-              <p className="text-xs text-gray-400">Tap a star to rate</p>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-gray-700">
-              Comments{" "}
-              <span className="font-normal text-gray-400">(optional)</span>
-            </label>
-            <textarea
-              value={comments}
-              onChange={(e) => setComments(e.target.value)}
-              placeholder="Tell us more about your experience…"
-              rows={3}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900
-                placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500
-                focus:border-transparent resize-none"
-            />
-          </div>
-
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <button
-            type="submit"
-            disabled={orderRating === 0 || deliveryRating === 0 || submitting}
-            className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold text-sm
-              hover:bg-blue-700 active:bg-blue-800 transition-colors
-              disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {submitting ? "Submitting…" : "Submit Feedback"}
-          </button>
-        </form>
+      {/* Sticky submit footer */}
+      <div style={{ padding: "14px 22px 22px", background: "white", borderTop: "1px solid #e6ebef" }}>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!valid || submitting}
+          style={{
+            border: 0, width: "100%", height: 50,
+            background: valid ? "#16a34a" : "#cbd5e1",
+            color: "white", fontWeight: 600, fontSize: 15,
+            borderRadius: 12, fontFamily: "inherit",
+            cursor: valid ? "pointer" : "not-allowed",
+            boxShadow: valid ? "0 1px 0 rgba(255,255,255,0.3) inset, 0 1px 3px rgba(0,0,0,0.1)" : "none",
+            transition: "background .12s",
+          }}
+        >
+          {submitting ? "Submitting…" : "Submit feedback"}
+        </button>
       </div>
     </div>
   );

@@ -70,30 +70,24 @@ function PeriodSelect({ value, onChange }: { value: Period; onChange: (p: Period
 
 // ─── MetricBlock ──────────────────────────────────────────────────────────────
 
-type MetricColor = "gray" | "blue" | "amber" | "green" | "red";
-const METRIC_BG: Record<MetricColor, string> = {
-  gray: "bg-white border-gray-200", blue: "bg-blue-50 border-blue-200",
-  amber: "bg-amber-50 border-amber-200", green: "bg-green-50 border-green-200",
-  red: "bg-red-50 border-red-200",
-};
-const METRIC_NUM: Record<MetricColor, string> = {
-  gray: "text-gray-900", blue: "text-blue-700", amber: "text-amber-700",
-  green: "text-green-700", red: "text-red-700",
-};
-
 function MetricBlock({
-  label, value, color = "gray", period, onPeriodChange,
+  label, value, iconColor, period, onPeriodChange, children,
 }: {
-  label: string; value: number; color?: MetricColor;
+  label: string; value: number;
+  iconColor?: "green" | "amber" | "blue" | "red";
   period?: Period; onPeriodChange?: (p: Period) => void;
+  children?: React.ReactNode;
 }) {
   return (
-    <div className={`flex-1 min-w-0 rounded-xl border p-4 flex flex-col gap-2 shadow-sm ${METRIC_BG[color]}`}>
-      <div className="flex items-start justify-between gap-1">
-        <p className="text-xs font-medium text-gray-500 leading-tight">{label}</p>
+    <div className="pk-metric">
+      <div className="pk-metric-head">
+        {children ? (
+          <div className={`pk-metric-iconwrap${iconColor ? ` ${iconColor}` : ""}`}>{children}</div>
+        ) : <div />}
         {period && onPeriodChange && <PeriodSelect value={period} onChange={onPeriodChange} />}
       </div>
-      <p className={`text-3xl font-bold leading-none ${METRIC_NUM[color]}`}>{value}</p>
+      <p className="pk-metric-value num">{value}</p>
+      <p className="pk-metric-label">{label}</p>
     </div>
   );
 }
@@ -1327,8 +1321,9 @@ function FeedbackTab({ uid, deliveries, flagThreshold }: { uid: string; deliveri
 // ─── Address autocomplete ─────────────────────────────────────────────────────
 
 const INPUT_CLASS =
-  "border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 " +
-  "placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
+  "w-full border border-[#e6ebef] rounded-lg px-3 py-[9px] text-[13.5px] text-[#0c1116] " +
+  "placeholder:text-[#94a3b8] focus:outline-none focus:border-[#16a34a] " +
+  "focus:shadow-[0_0_0_3px_rgba(22,163,74,0.12)] transition-colors";
 
 interface Suggestion {
   placeId: string; name: string; placeName: string;
@@ -1505,55 +1500,74 @@ function CustomerSearch({
 
 type ActiveView = "deliveries" | "feedback";
 
+function NavIcon({ children }: { children: React.ReactNode }) {
+  return <span className="pk-icon">{children}</span>;
+}
+
 function Sidebar({
   businessName, userEmail, activeView, onViewChange, onSignOut,
+  trialDaysRemaining, trialDeliveriesUsed, trialDeliveriesLimit, trialExhausted,
 }: {
   businessName: string; userEmail: string;
   activeView: ActiveView; onViewChange: (v: ActiveView) => void;
   onSignOut: () => void;
+  trialDaysRemaining?: number; trialDeliveriesUsed?: number;
+  trialDeliveriesLimit?: number; trialExhausted?: boolean;
 }) {
   const pathname = usePathname();
+  const initial = (businessName || "B").charAt(0).toUpperCase();
+  const emailInitial = (userEmail || "U").charAt(0).toUpperCase();
 
   const navItems = [
     {
       label: "Dashboard", view: "deliveries" as ActiveView, href: null,
       icon: (
-        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
-        </svg>
+        <NavIcon>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
+          </svg>
+        </NavIcon>
       ),
     },
     {
       label: "Riders", view: null, href: "/riders",
       icon: (
-        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-        </svg>
+        <NavIcon>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+          </svg>
+        </NavIcon>
       ),
     },
     {
-      label: "Feedback", view: "feedback" as ActiveView, href: null,
+      label: "Feedback", view: null, href: "/feedback-dashboard",
       icon: (
-        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
-        </svg>
+        <NavIcon>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+          </svg>
+        </NavIcon>
       ),
     },
     {
       label: "Automations", view: null, href: "/automations",
       icon: (
-        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
-        </svg>
+        <NavIcon>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
+          </svg>
+        </NavIcon>
       ),
     },
     {
       label: "Settings", view: null, href: "/settings",
       icon: (
-        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-        </svg>
+        <NavIcon>
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+          </svg>
+        </NavIcon>
       ),
     },
   ];
@@ -1563,41 +1577,71 @@ function Sidebar({
     return pathname === item.href;
   }
 
-  const navContent = navItems.map((item) => {
-    const active = isActive(item);
-    const cls = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full text-left
-      ${active ? "bg-green-50 text-green-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`;
-    const inner = <>{item.icon}{item.label}</>;
-    if (item.href) return (
-      <Link key={item.label} href={item.href} className={cls}>{inner}</Link>
-    );
-    return (
-      <button key={item.label} onClick={() => onViewChange(item.view!)} className={cls}>{inner}</button>
-    );
-  });
+  const showTrialCard = (trialDeliveriesLimit ?? 0) > 0 && !trialExhausted;
+  const trialPct = showTrialCard
+    ? Math.min(100, ((trialDeliveriesUsed ?? 0) / (trialDeliveriesLimit ?? 1)) * 100)
+    : 0;
 
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col fixed left-0 top-0 bottom-0 w-60 bg-white border-r border-gray-200 z-20">
-        <div className="px-5 py-5 border-b border-gray-100 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center shrink-0">
-              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
-              </svg>
-            </div>
-            <span className="font-bold text-gray-900 text-base tracking-tight">Peleka</span>
+      <aside className="hidden lg:flex flex-col fixed left-0 top-0 bottom-0 z-20"
+        style={{ width: "var(--pk-sidebar-w, 240px)", background: "var(--pk-bg, #fff)", borderRight: "1px solid var(--pk-border, #e6ebef)" }}>
+
+        {/* Brand */}
+        <div className="pk-brand mx-3 mt-[18px]">
+          <div className="pk-logo">{initial}</div>
+          <div className="pk-brand-meta min-w-0">
+            <p className="pk-brand-name truncate">{businessName || "My Business"}</p>
+            <p className="pk-brand-sub">Free plan</p>
           </div>
         </div>
-        <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5 overflow-y-auto">
-          {navContent}
+
+        {/* Nav */}
+        <nav className="pk-nav flex-1 px-3 py-3 overflow-y-auto">
+          <p className="pk-nav-label">Workspace</p>
+          {navItems.map((item) => {
+            const active = isActive(item);
+            const cls = `pk-nav-item${active ? " active" : ""}`;
+            const inner = <>{item.icon}{item.label}</>;
+            if (item.href) return (
+              <Link key={item.label} href={item.href} className={cls}>{inner}</Link>
+            );
+            return (
+              <button key={item.label} onClick={() => onViewChange(item.view!)} className={cls}>{inner}</button>
+            );
+          })}
         </nav>
-        <div className="px-4 py-4 border-t border-gray-100 shrink-0">
-          <p className="text-xs font-semibold text-gray-900 truncate">{businessName || "My Business"}</p>
-          <p className="text-xs text-gray-400 truncate mt-0.5">{userEmail}</p>
-          <button onClick={onSignOut} className="mt-3 text-xs text-gray-400 hover:text-gray-700 transition-colors">
-            Sign out
+
+        <div className="pk-spacer" />
+
+        {/* Trial card */}
+        {showTrialCard && (
+          <div className="pk-trial-card mx-3 mb-3">
+            <div className="row">
+              <span className="pk-trial-num">Free trial</span>
+              <span className="pk-trial-label">{trialDaysRemaining}d left</span>
+            </div>
+            <div className="pk-trial-bar">
+              <div style={{ width: `${trialPct}%` }} />
+            </div>
+            <span className="pk-trial-label">
+              {trialDeliveriesUsed} of {trialDeliveriesLimit} deliveries used
+            </span>
+          </div>
+        )}
+
+        {/* User row */}
+        <div className="pk-user-row mx-2 mb-3" style={{ borderTop: "1px solid var(--pk-border, #e6ebef)", borderRadius: 0, paddingTop: 10 }}>
+          <div className="pk-avatar">{emailInitial}</div>
+          <div className="pk-user-meta">
+            <p className="pk-user-email truncate">{userEmail}</p>
+          </div>
+          <button onClick={onSignOut} title="Sign out"
+            style={{ color: "var(--pk-fg-4, #94a3b8)", background: "none", border: "none", cursor: "pointer", flexShrink: 0, padding: 4 }}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 9V5.25A2.25 2.25 0 0 1 10.5 3h6a2.25 2.25 0 0 1 2.25 2.25v13.5A2.25 2.25 0 0 1 16.5 21h-6a2.25 2.25 0 0 1-2.25-2.25V15m-3 0-3-3m0 0 3-3m-3 3H15" />
+            </svg>
           </button>
         </div>
       </aside>
@@ -1670,11 +1714,13 @@ function NewDeliveryPanel({ uid, onClose, trialExhausted }: {
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
-      <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-          <h2 className="text-base font-semibold text-gray-900">New Delivery</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+      <div className="fixed inset-0 z-40" style={{ background: "rgba(15,23,42,0.35)", backdropFilter: "blur(2px)" }} onClick={onClose} />
+      <div className="fixed right-0 top-0 bottom-0 z-50 flex flex-col" style={{ width: "min(440px, 92%)", background: "#ffffff" }}>
+        <div className="flex items-center justify-between px-6 py-4 shrink-0" style={{ borderBottom: "1px solid #e6ebef" }}>
+          <h2 className="text-base font-semibold" style={{ color: "#0c1116" }}>New Delivery</h2>
+          <button onClick={onClose} className="transition-colors" style={{ color: "#94a3b8" }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "#64748b")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "#94a3b8")}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
@@ -1696,7 +1742,7 @@ function NewDeliveryPanel({ uid, onClose, trialExhausted }: {
               onSelect={(addr, lat, lng) => { setFields((f) => ({ ...f, deliveryAddress: addr })); setAddressCoords({ lat, lng }); }}
             />
             {addressCoords && (
-              <p className="text-xs text-green-600 flex items-center gap-1 -mt-2">
+              <p className="text-xs flex items-center gap-1 -mt-2" style={{ color: "#16a34a" }}>
                 <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
                 </svg>
@@ -1708,7 +1754,8 @@ function NewDeliveryPanel({ uid, onClose, trialExhausted }: {
                 placeholder="Leave at gate, call on arrival…" rows={2} className="resize-none" />
             </Field>
             {trialExhausted && (
-              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
+              <div className="flex items-center gap-2 rounded-lg px-4 py-3 text-sm"
+                style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#b45309" }}>
                 <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                 </svg>
@@ -1716,9 +1763,10 @@ function NewDeliveryPanel({ uid, onClose, trialExhausted }: {
               </div>
             )}
           </div>
-          <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+          <div className="px-6 py-4 shrink-0" style={{ borderTop: "1px solid #e6ebef" }}>
             <button type="submit" disabled={!canSubmit || submitting || !!trialExhausted}
-              className="w-full py-2.5 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              className="w-full py-2.5 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+              style={{ borderRadius: 8, background: "#16a34a" }}>
               {submitting ? "Creating…" : "Create Delivery"}
             </button>
           </div>
@@ -1928,8 +1976,9 @@ export default function DashboardPage() {
 
   if (authLoading || (!!user && !profileLoaded)) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#ffffff" }}>
+        <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor: "#16a34a", borderTopColor: "transparent" }} />
       </div>
     );
   }
@@ -1969,7 +2018,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="peleka-app" style={{ height: "100vh" }}>
       {/* Sidebar */}
       <Sidebar
         businessName={businessName}
@@ -1977,42 +2026,45 @@ export default function DashboardPage() {
         activeView={activeView}
         onViewChange={setActiveView}
         onSignOut={() => signOut().then(() => router.push("/login"))}
+        trialDaysRemaining={trialDaysRemaining}
+        trialDeliveriesUsed={trialDeliveriesUsed}
+        trialDeliveriesLimit={trialDeliveriesLimit}
+        trialExhausted={trialExhausted}
       />
 
       {/* Main */}
-      <div className="flex-1 flex flex-col min-w-0 lg:ml-60">
+      <div className="pk-main min-w-0 lg:ml-60">
         {/* Top bar */}
-        <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3.5 flex items-center justify-between shrink-0 z-10">
-          <h1 className="text-base font-semibold text-gray-900">
-            {activeView === "feedback" ? "Feedback" : "Dashboard"}
-          </h1>
-          <div className="flex items-center gap-2">
-            {/* Notifications */}
+        <header className="pk-topbar shrink-0">
+          <div className="pk-topbar-inner">
+            <div className="flex-1 min-w-0">
+              <h1 className="pk-page-title">
+                {activeView === "feedback" ? "Feedback" : "Dashboard"}
+              </h1>
+              <p className="pk-page-sub">
+                {new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
+              </p>
+            </div>
+            {/* Notifications bell */}
             <div className="relative">
-              {notifications.length > 0 && (
-                <button
-                  onClick={() => setShowNotifications((v) => !v)}
-                  className="relative w-8 h-8 flex items-center justify-center rounded-lg border border-red-200 bg-red-50 hover:bg-red-100"
-                  aria-label="Notifications"
-                >
-                  <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-                  </svg>
-                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center px-1">
-                    {notifications.length}
-                  </span>
-                </button>
-              )}
+              <button
+                onClick={() => setShowNotifications((v) => !v)}
+                className="pk-icon-btn"
+                aria-label="Notifications"
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+                  style={{ color: notifications.length > 0 ? "#dc2626" : "var(--pk-fg-3)" }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
+                </svg>
+                {notifications.length > 0 && <span className="pk-dot" />}
+              </button>
               {showNotifications && notifications.length > 0 && (
                 <NotificationsPanel notifications={notifications} uid={uid} onClose={() => setShowNotifications(false)} />
               )}
             </div>
-            {/* New Delivery — hidden on mobile (use FAB) */}
-            <button
-              onClick={() => setShowNewDelivery(true)}
-              className="hidden sm:flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+            {/* New Delivery */}
+            <button onClick={() => setShowNewDelivery(true)} className="pk-btn-primary hidden sm:flex">
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
               </svg>
               New Delivery
@@ -2021,19 +2073,20 @@ export default function DashboardPage() {
         </header>
 
         {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto pb-16 lg:pb-6">
+        <div className="pk-main-scroll pb-16 lg:pb-6">
           {activeView === "feedback" ? (
-            <div className="px-4 sm:px-6 py-6 max-w-4xl">
+            <div className="pk-main-inner" style={{ maxWidth: 900 }}>
               {loading ? (
-                <div className="flex justify-center py-16">
-                  <div className="w-6 h-6 rounded-full border-2 border-green-600 border-t-transparent animate-spin" />
+                <div className="pk-empty">
+                  <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin mx-auto"
+                    style={{ borderColor: "var(--pk-accent)", borderTopColor: "transparent" }} />
                 </div>
               ) : (
                 <FeedbackTab uid={uid} deliveries={deliveries} flagThreshold={flagThreshold} />
               )}
             </div>
           ) : (
-            <div className="px-4 sm:px-6 py-5 flex flex-col gap-5 max-w-5xl">
+            <div className="pk-main-inner">
 
               {/* Checklist */}
               {!loading && showChecklist && (
@@ -2050,36 +2103,19 @@ export default function DashboardPage() {
                 />
               )}
 
-              {/* Trial counter */}
-              {!loading && trialDeliveriesLimit > 0 && !trialExhausted && (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-5 py-3.5">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <p className="text-xs font-medium text-gray-700">Free trial</p>
-                    <p className="text-xs text-gray-500">
-                      {trialDeliveriesUsed} of {trialDeliveriesLimit} deliveries used
-                      {trialStartDate > 0 && (
-                        <span className={trialDaysRemaining <= 3 ? " text-amber-600 font-medium" : ""}>
-                          {" "}· {trialDaysRemaining} day{trialDaysRemaining !== 1 ? "s" : ""} left
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="w-full bg-gray-100 rounded-full h-1.5">
-                    <div className={`h-1.5 rounded-full transition-all ${trialDaysRemaining <= 3 ? "bg-amber-500" : "bg-green-500"}`}
-                      style={{ width: `${Math.min(100, (trialDeliveriesUsed / trialDeliveriesLimit) * 100)}%` }} />
-                  </div>
-                </div>
-              )}
+              {/* Trial exhausted warning */}
               {!loading && trialExhausted && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg px-5 py-3.5 flex items-center gap-3">
-                  <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <div className="flex items-center gap-3 rounded-lg px-5 py-3.5"
+                  style={{ background: "var(--pk-amber-soft)", border: "1px solid #fde68a" }}>
+                  <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+                    style={{ color: "var(--pk-amber)", flexShrink: 0 }}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                   </svg>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-amber-800">Free trial ended</p>
-                    <p className="text-xs text-amber-600 mt-0.5">
+                    <p style={{ fontSize: 13, fontWeight: 600, color: "#92400e" }}>Free trial ended</p>
+                    <p style={{ fontSize: 12, marginTop: 2, color: "var(--pk-amber)" }}>
                       {trialTimeExpired ? "Your 14-day trial has expired." : `You've used all ${trialDeliveriesLimit} trial deliveries.`}{" "}
-                      <a href="mailto:hellopeleka@gmail.com" className="underline">Contact us to upgrade.</a>
+                      <a href="mailto:hellopeleka@gmail.com" style={{ textDecoration: "underline" }}>Contact us to upgrade.</a>
                     </p>
                   </div>
                 </div>
@@ -2087,65 +2123,80 @@ export default function DashboardPage() {
 
               {/* Metrics */}
               {loading ? (
-                <div className="flex justify-center py-12">
-                  <div className="w-6 h-6 rounded-full border-2 border-green-600 border-t-transparent animate-spin" />
+                <div className="pk-empty">
+                  <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin mx-auto"
+                    style={{ borderColor: "var(--pk-accent)", borderTopColor: "transparent" }} />
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-3">
-                  <MetricBlock label="Orders Today" value={ordersToday} />
-                  <MetricBlock label="Unassigned" value={unassigned.length} />
-                  <MetricBlock label="Dispatched" value={dispatched.length} />
-                  <MetricBlock label="Delivered" value={deliveredFiltered.length}
-                    period={deliveredPeriod} onPeriodChange={setDeliveredPeriod} />
-                  <MetricBlock label="Cancelled" value={cancelledFiltered.length}
-                    period={cancelledPeriod} onPeriodChange={setCancelledPeriod} />
+                <div className="pk-metrics">
+                  <MetricBlock label="Orders Today" value={ordersToday}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
+                  </MetricBlock>
+                  <MetricBlock label="Unassigned" value={unassigned.length} iconColor="amber">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </MetricBlock>
+                  <MetricBlock label="Dispatched" value={dispatched.length} iconColor="blue">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" /></svg>
+                  </MetricBlock>
+                  <MetricBlock label="Delivered" value={deliveredFiltered.length} iconColor="green"
+                    period={deliveredPeriod} onPeriodChange={setDeliveredPeriod}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </MetricBlock>
+                  <MetricBlock label="Cancelled" value={cancelledFiltered.length} iconColor="red"
+                    period={cancelledPeriod} onPeriodChange={setCancelledPeriod}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </MetricBlock>
                 </div>
               )}
 
               {/* Active Right Now */}
               {!loading && dispatched.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-3">
-                    <h2 className="text-sm font-semibold text-gray-900">Active Right Now</h2>
-                    <span className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
+                <div className="pk-section">
+                  <div className="pk-section-head">
+                    <div>
+                      <p className="pk-section-title">Active Right Now</p>
+                    </div>
+                    <span className="pk-live">
+                      <span className="pk-live-dot" />
                       {dispatched.length} live
                     </span>
                   </div>
-                  <div className="flex gap-3 overflow-x-auto pb-1 sm:grid sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="pk-active-grid">
                     {dispatched.map((d) => (
-                      <button key={d.id} onClick={() => setActivePanel(d)}
-                        className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 flex flex-col gap-2 text-left hover:border-green-400 hover:shadow-md transition-all shrink-0 w-64 sm:w-auto">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-semibold text-gray-900 text-sm truncate">{d.customerName}</p>
-                          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 shrink-0">Live</span>
+                      <button key={d.id} onClick={() => setActivePanel(d)} className="pk-active-card">
+                        <div className="pk-active-row">
+                          <p className="pk-active-customer truncate">{d.customerName}</p>
+                          <span className="pk-live shrink-0">
+                            <span className="pk-live-dot" />
+                            LIVE
+                          </span>
                         </div>
-                        <p className="text-xs text-gray-500 leading-snug line-clamp-2">{d.deliveryAddress}</p>
-                        {d.riderName && <p className="text-xs text-gray-600">{d.riderName}</p>}
-                        <p className="text-xs text-green-600 font-medium">View map →</p>
+                        <p className="pk-active-address line-clamp-2">{d.deliveryAddress}</p>
+                        {d.riderName && (
+                          <div className="pk-active-foot">
+                            <div className="pk-active-rider">
+                              <div className="pk-rider-av">{d.riderName.charAt(0)}</div>
+                              <span className="pk-rider-name">{d.riderName}</span>
+                            </div>
+                          </div>
+                        )}
                       </button>
                     ))}
                   </div>
-                </section>
+                </div>
               )}
 
               {/* Section tabs */}
               {!loading && (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                <div className="pk-section">
                   {/* Tab bar */}
-                  <div className="flex overflow-x-auto border-b border-gray-200">
+                  <div className="pk-tabs overflow-x-auto">
                     {sectionTabs.map((s) => (
                       <button key={s.key} onClick={() => setActiveSection(s.key)}
-                        className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-px
-                          ${activeSection === s.key
-                            ? "border-green-600 text-green-600"
-                            : "border-transparent text-gray-500 hover:text-gray-700"}`}>
+                        className={`pk-tab${activeSection === s.key ? " active" : ""}`}>
                         {s.label}
                         {s.count > 0 && (
-                          <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium
-                            ${activeSection === s.key ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                            {s.count}
-                          </span>
+                          <span className="pk-tab-count">{s.count}</span>
                         )}
                       </button>
                     ))}
@@ -2178,10 +2229,11 @@ export default function DashboardPage() {
       {/* Mobile FAB */}
       <button
         onClick={() => setShowNewDelivery(true)}
-        className="sm:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-green-600 text-white shadow-lg flex items-center justify-center hover:bg-green-700"
+        className="sm:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full text-white shadow-lg flex items-center justify-center"
+        style={{ background: "var(--pk-accent)" }}
         aria-label="New Delivery"
       >
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+        <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
         </svg>
       </button>

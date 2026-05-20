@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Peleka Dashboard — Web</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="peleka.css"/>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: "Inter", system-ui, sans-serif; }
+    #root { width: 100vw; height: 100vh; }
+
+    /* Each artboard contains a Dashboard — it needs to fill the artboard */
+    .pk-board { width: 100%; height: 100%; overflow: hidden; isolation: isolate; position: relative; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script src="data.js"></script>
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="dashboard.jsx"></script>
+
+  <script type="text/babel" data-presets="react">
+    // Curated accent palettes — name : [primary, hover, soft bg, soft border]
+    const ACCENT_OPTIONS = {
+      "Forest (default)": ["#16a34a", "#15803d", "#f0fdf4", "#bbf7d0"],
+      "Emerald":          ["#059669", "#047857", "#ecfdf5", "#a7f3d0"],
+      "Lime":             ["#65a30d", "#4d7c0f", "#f7fee7", "#d9f99d"],
+      "Teal":             ["#0d9488", "#0f766e", "#f0fdfa", "#99f6e4"],
+    };
+
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "accentName": "Forest (default)",
+      "fontSize": 14,
+      "density": "regular",
+      "cardGap": 20,
+      "sidebarWidth": 240,
+      "trialUsed": 14,
+      "showChecklist": false,
+      "checklistProgress": 1,
+      "logoState": "failed",
+      "accountType": "email",
+      "accountState": "empty"
+    }/*EDITMODE-END*/;
+
+    function App() {
+      const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+      const accentArr = ACCENT_OPTIONS[t.accentName] || ACCENT_OPTIONS["Forest (default)"];
+      const tweaks = {
+        accent:           accentArr[0],
+        accentHover:      accentArr[1],
+        accentSoft:       accentArr[2],
+        accentSoftBorder: accentArr[3],
+        fontSize:         t.fontSize,
+        density:          t.density,
+        cardGap:          t.cardGap,
+        sidebarWidth:     t.sidebarWidth,
+        trialUsed:        t.trialUsed,
+        showChecklist:    t.showChecklist,
+        checklistProgress: t.checklistProgress,
+        logoState:        t.logoState,
+        accountType:      t.accountType,
+        accountState:     t.accountState,
+      };
+
+      const PelekaDashboard = window.PelekaDashboard;
+
+      return (
+        <>
+          <DesignCanvas>
+            <DCSection
+              id="dispatcher"
+              title="Dispatcher Dashboard"
+              subtitle="Delivery tracking for the merchant — Fragrance HQ, Nairobi"
+            >
+              <DCArtboard id="sidebar" label="A · Left sidebar nav" width={1440} height={900}>
+                <div className="pk-board">
+                  <PelekaDashboard layout="sidebar" tweaks={tweaks} />
+                </div>
+              </DCArtboard>
+              <DCArtboard id="topnav" label="B · Top nav bar" width={1440} height={900}>
+                <div className="pk-board">
+                  <PelekaDashboard layout="topnav" tweaks={tweaks} />
+                </div>
+              </DCArtboard>
+            </DCSection>
+          </DesignCanvas>
+
+          <TweaksPanel title="Tweaks">
+            <TweakSection label="Brand" />
+            <TweakSelect
+              label="Accent shade"
+              value={t.accentName}
+              options={Object.keys(ACCENT_OPTIONS)}
+              onChange={(v) => setTweak("accentName", v)}
+            />
+
+            <TweakSection label="Typography" />
+            <TweakSlider
+              label="Font size"
+              value={t.fontSize} min={12} max={17} step={0.5} unit="px"
+              onChange={(v) => setTweak("fontSize", v)}
+            />
+
+            <TweakSection label="Density & spacing" />
+            <TweakRadio
+              label="Row density"
+              value={t.density}
+              options={["compact", "regular", "comfortable"]}
+              onChange={(v) => setTweak("density", v)}
+            />
+            <TweakSlider
+              label="Card spacing"
+              value={t.cardGap} min={8} max={40} step={2} unit="px"
+              onChange={(v) => setTweak("cardGap", v)}
+            />
+
+            <TweakSection label="Sidebar variant" />
+            <TweakSlider
+              label="Sidebar width"
+              value={t.sidebarWidth} min={200} max={300} step={4} unit="px"
+              onChange={(v) => setTweak("sidebarWidth", v)}
+            />
+
+            <TweakSection label="Onboarding & trial state" />
+            <TweakToggle
+              label="Show activation checklist"
+              value={t.showChecklist}
+              onChange={(v) => setTweak("showChecklist", v)}
+            />
+            <TweakSlider
+              label="Checklist progress"
+              value={t.checklistProgress} min={1} max={4} step={1}
+              onChange={(v) => setTweak("checklistProgress", v)}
+            />
+            <TweakSlider
+              label="Trial used"
+              value={t.trialUsed} min={0} max={25} step={1}
+              onChange={(v) => setTweak("trialUsed", v)}
+            />
+
+            <TweakSection label="Settings page" />
+            <TweakSelect
+              label="Logo upload state"
+              value={t.logoState}
+              options={["empty", "uploaded", "uploading", "failed"]}
+              onChange={(v) => setTweak("logoState", v)}
+            />
+            <TweakRadio
+              label="Account type"
+              value={t.accountType}
+              options={["email", "google"]}
+              onChange={(v) => setTweak("accountType", v)}
+            />
+
+            <TweakSection label="Account state" />
+            <TweakSelect
+              label="State"
+              value={t.accountState}
+              options={["populated", "empty", "sample"]}
+              onChange={(v) => setTweak("accountState", v)}
+            />
+          </TweaksPanel>
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

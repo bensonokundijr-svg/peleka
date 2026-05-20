@@ -3,13 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { AppSidebar } from "@/app/components/AppSidebar";
 import { db, storage } from "@/lib/firebase";
 import { ref as dbRef, get, update } from "firebase/database";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useAuth } from "@/lib/auth-context";
-
-const INPUT = "w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
 
 function dbErrorMessage(err: unknown): string {
   const code = (err as { code?: string }).code ?? "";
@@ -23,23 +21,28 @@ export default function SettingsPage() {
 
   const [businessName, setBusinessName] = useState("");
   const [phone, setPhone] = useState("");
-  const [showQueuePosition, setShowQueuePosition] = useState(false);
+  const [trialStartDate, setTrialStartDate] = useState(0);
   const [logoUrl, setLogoUrl] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auth guard
+  const initRef = useRef({ businessName: "", phone: "" });
+  const dirty = businessName !== initRef.current.businessName || phone !== initRef.current.phone || !!logoFile;
+
+  const isGoogle = user?.providerData?.some((p) => p.providerId === "google.com") ?? false;
+
   useEffect(() => {
     if (!authLoading && !user) router.replace("/login");
   }, [user, authLoading, router]);
 
-  // Load profile
   useEffect(() => {
     if (!user) return;
     get(dbRef(db, `businesses/${user.uid}/profile`))
@@ -49,7 +52,8 @@ export default function SettingsPage() {
           setBusinessName(data.businessName ?? "");
           setPhone(data.phone ?? "");
           setLogoUrl(data.logoUrl ?? "");
-          setShowQueuePosition(data.showQueuePosition ?? false);
+          setTrialStartDate(data.trialStartDate ?? 0);
+          initRef.current = { businessName: data.businessName ?? "", phone: data.phone ?? "" };
         }
         setLoadingProfile(false);
       })
@@ -61,6 +65,7 @@ export default function SettingsPage() {
     if (!file) return;
     setLogoFile(file);
     setLogoPreview(URL.createObjectURL(file));
+    setLogoError(null);
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -68,238 +73,331 @@ export default function SettingsPage() {
     if (!user || saving) return;
     setSaving(true);
     setError(null);
-    setSuccess(false);
+    setSaved(false);
 
     let timedOut = false;
     const timeoutId = setTimeout(() => {
       timedOut = true;
-      flushSync(() => {
-        setSaving(false);
-        setError("Save timed out — please try again.");
-      });
+      flushSync(() => { setSaving(false); setError("Save timed out — please try again."); });
     }, 10_000);
 
     try {
       let finalLogoUrl = logoUrl;
-      let logoWarning: string | null = null;
+      let uploadFailed = false;
 
       if (logoFile) {
+        setLogoUploading(true);
         try {
-          // Force-refresh the token immediately before the upload so the SDK
-          // sends a current token regardless of provider or cache state.
           await user.getIdToken(true);
-
           const ext = logoFile.name.split(".").pop() ?? "jpg";
           const logoRef = storageRef(storage, `logos/${user.uid}/logo.${ext}`);
-
-          // Race the upload against an 8 s timeout so a hung Storage request
-          // never blocks the whole save — name and phone still get written.
           const uploadTimeout = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error("upload-timeout")), 8_000),
           );
           await Promise.race([uploadBytes(logoRef, logoFile), uploadTimeout]);
-
           finalLogoUrl = await getDownloadURL(logoRef);
+          setLogoError(null);
         } catch (err) {
-          logoWarning =
+          uploadFailed = true;
+          setLogoError(
             err instanceof Error && err.message === "upload-timeout"
               ? "Logo upload timed out — name and phone were saved."
-              : `Logo upload failed: ${err instanceof Error ? err.message : String(err)}`;
+              : `Logo upload failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        } finally {
+          setLogoUploading(false);
         }
       }
 
       await update(dbRef(db, `businesses/${user.uid}/profile`), {
         businessName: businessName.trim(),
         phone: phone.trim(),
-        showQueuePosition,
-        ...(finalLogoUrl ? { logoUrl: finalLogoUrl } : {}),
+        ...(finalLogoUrl && !uploadFailed ? { logoUrl: finalLogoUrl } : {}),
       });
 
       clearTimeout(timeoutId);
       if (timedOut) return;
 
+      initRef.current = { businessName: businessName.trim(), phone: phone.trim() };
       flushSync(() => {
         setBusinessName(businessName.trim());
         setPhone(phone.trim());
-        setLogoUrl(finalLogoUrl);
-        setLogoFile(null);
-        setLogoPreview(null);
-        setShowQueuePosition(showQueuePosition);
+        if (!uploadFailed) { setLogoUrl(finalLogoUrl); setLogoFile(null); setLogoPreview(null); }
         setSaving(false);
-        setSuccess(true);
-        if (logoWarning) setError(logoWarning);
+        setSaved(true);
       });
 
-      if (successTimerRef.current) clearTimeout(successTimerRef.current);
-      successTimerRef.current = setTimeout(() => setSuccess(false), 3000);
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 3000);
     } catch (err) {
       clearTimeout(timeoutId);
       if (timedOut) return;
-
       const code = (err as { code?: string }).code ?? "";
       const msg = code.startsWith("auth/")
         ? "Session error — please sign out and sign back in, then try again."
         : dbErrorMessage(err);
-
-      flushSync(() => {
-        setError(msg);
-        setSaving(false);
-      });
+      flushSync(() => { setError(msg); setSaving(false); });
     }
   }
 
   if (authLoading || loadingProfile) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8faf9" }}>
+        <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor: "#16a34a", borderTopColor: "transparent" }} />
       </div>
     );
   }
-
   if (!user) return null;
 
   const displayLogo = logoPreview ?? logoUrl;
+  const ownerInitial = user.displayName?.charAt(0)?.toUpperCase() ?? user.email?.charAt(0)?.toUpperCase() ?? "?";
+  const firstName = user.displayName?.split(" ")[0] ?? "there";
+
+  const TRIAL_DAYS = 14;
+  const trialDaysElapsed = trialStartDate > 0 ? Math.floor((Date.now() - trialStartDate) / 86_400_000) : 0;
+  const trialDaysRemaining = Math.max(0, TRIAL_DAYS - trialDaysElapsed);
+  const trialExhausted = trialStartDate > 0 && Date.now() > trialStartDate + TRIAL_DAYS * 86_400_000;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-2xl mx-auto flex items-center justify-between w-full">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-gray-900 leading-tight">Settings</h1>
-              <p className="text-xs text-gray-500">{user.email}</p>
-            </div>
+    <div className="peleka-app" style={{ height: "100vh" }}>
+      <AppSidebar
+        businessName={businessName}
+        userEmail={user.email ?? ""}
+        onSignOut={() => signOut().then(() => router.push("/login"))}
+        trialDaysRemaining={trialStartDate > 0 ? trialDaysRemaining : undefined}
+        trialExhausted={trialExhausted}
+      />
+
+      <div className="pk-main min-w-0 lg:ml-60">
+        <header className="pk-topbar shrink-0">
+          <div className="pk-topbar-inner">
+            <h1 className="pk-page-title">Settings</h1>
           </div>
-          <div className="flex items-center gap-3">
-            <Link href="/dashboard" className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors">
-              Dashboard
-            </Link>
-            <button
-              onClick={() => signOut().then(() => router.push("/login"))}
-              className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
-            >
-              Sign out
-            </button>
-          </div>
+        </header>
+
+        <div className="pk-main-scroll pb-16 lg:pb-6">
+          <main className="pk-main-inner" style={{ maxWidth: 720 }}>
+            <form onSubmit={handleSave} className="flex flex-col gap-5">
+
+              <div>
+                <div className="pk-greeting">Hi {firstName}</div>
+                <div className="pk-greeting-sub">Manage how Peleka represents your business to customers and riders.</div>
+              </div>
+
+              {/* Business Profile */}
+              <div className="pk-settings-card">
+                <div className="pk-settings-head">
+                  <div className="pk-settings-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 21h18M6 21V7l6-4 6 4v14M10 9h.01M14 9h.01M10 13h.01M14 13h.01M10 17h4"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="pk-settings-title">Business Profile</div>
+                    <div className="pk-settings-subtitle">Shown to customers on tracking pages, feedback forms, and rider SMS.</div>
+                  </div>
+                </div>
+
+                <div className="pk-logo-row">
+                  <div className={"pk-logo-avatar" + (logoUploading ? " uploading" : "")}>
+                    {displayLogo ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={displayLogo} alt={businessName} />
+                    ) : (
+                      ownerInitial
+                    )}
+                    {logoUploading && <div className="pk-logo-spinner"><div /></div>}
+                  </div>
+                  <div className="pk-logo-meta">
+                    <div className="pk-logo-actions">
+                      {logoUploading ? (
+                        <button type="button" className="pk-btn-ghost" disabled style={{ opacity: 0.6, cursor: "wait" }}>Uploading…</button>
+                      ) : (
+                        <button type="button" className="pk-btn-ghost" onClick={() => fileRef.current?.click()}>
+                          {displayLogo ? "Change logo" : "Upload logo"}
+                        </button>
+                      )}
+                      {displayLogo && !logoUploading && (
+                        <button type="button" className="pk-btn-ghost" onClick={() => { setLogoFile(null); setLogoPreview(null); setLogoUrl(""); }}>Remove</button>
+                      )}
+                    </div>
+                    <div className="pk-logo-hint">PNG, JPG or WebP · Up to 2MB · Square images work best</div>
+                    {logoError && (
+                      <div className="pk-logo-error">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 9v4M12 17h.01M10.3 3.86 1.82 18a2 2 0 0 0 1.73 3h16.9a2 2 0 0 0 1.73-3L13.7 3.86a2 2 0 0 0-3.4 0z"/>
+                        </svg>
+                        <div>
+                          <div><strong>Logo upload failed</strong> — name and phone were saved.</div>
+                          <button type="button" onClick={() => fileRef.current?.click()}>Try again</button>
+                        </div>
+                      </div>
+                    )}
+                    <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={handleLogoChange} style={{ display: "none" }} />
+                  </div>
+                </div>
+
+                <div className="pk-form-grid">
+                  <div className="pk-form-row">
+                    <label className="pk-form-label">Business name</label>
+                    <input
+                      className="pk-form-input"
+                      type="text"
+                      value={businessName}
+                      onChange={(e) => setBusinessName(e.target.value)}
+                      placeholder="Acme Deliveries"
+                    />
+                  </div>
+                  <div className="pk-form-row">
+                    <label className="pk-form-label">Contact phone</label>
+                    <div className="pk-form-prefix-wrap">
+                      <span className="pk-form-prefix">🇰🇪 +254</span>
+                      <input
+                        type="tel"
+                        value={phone.replace(/^\+?254\s?/, "")}
+                        onChange={(e) => setPhone(e.target.value.replace(/[^\d ]/g, ""))}
+                        placeholder="700 000 000"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {error && <p style={{ fontSize: 13, color: "#b91c1c", marginTop: 12 }}>{error}</p>}
+
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, padding: "16px 0 0", marginTop: 8, borderTop: "1px solid var(--pk-border)" }}>
+                  {saved && (
+                    <span className="pk-save-bar-saved" style={{ marginRight: "auto" }}>
+                      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                      </svg>
+                      Settings saved
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="pk-btn-ghost"
+                    disabled={!dirty}
+                    style={{ opacity: dirty ? 1 : 0.5, cursor: dirty ? "pointer" : "not-allowed" }}
+                    onClick={() => {
+                      setBusinessName(initRef.current.businessName);
+                      setPhone(initRef.current.phone);
+                      setLogoFile(null);
+                      setLogoPreview(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="pk-btn-primary"
+                    disabled={saving || !dirty}
+                    style={{ opacity: dirty ? 1 : 0.5 }}
+                  >
+                    {saving ? "Saving…" : "Save changes"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Account */}
+              <div className="pk-settings-card">
+                <div className="pk-settings-head">
+                  <div className="pk-settings-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="8" r="4"/>
+                      <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="pk-settings-title">Account</div>
+                    <div className="pk-settings-subtitle">Your sign-in and security settings.</div>
+                  </div>
+                </div>
+
+                <div className="pk-account-row">
+                  <div>
+                    <div className="label">Email address</div>
+                    <div className="help">We use this for billing and security notifications.</div>
+                  </div>
+                  <div style={{ flex: "0 0 320px" }}>
+                    <div className="pk-form-input-wrap">
+                      <input className="pk-form-input locked" value={user.email ?? ""} readOnly />
+                      <span className="lock">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="11" width="18" height="11" rx="2"/>
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pk-account-row">
+                  <div>
+                    <div className="label">Sign-in method</div>
+                    <div className="help">
+                      {isGoogle
+                        ? "You signed in with Google. Manage your password in your Google account."
+                        : "You signed in with email and password."}
+                    </div>
+                  </div>
+                  <div>
+                    {isGoogle ? (
+                      <div className="pk-google-badge">
+                        <svg width="14" height="14" viewBox="0 0 48 48" aria-hidden>
+                          <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/>
+                          <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+                          <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.4-4.4 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-7.9l-6.5 5c3.4 6.7 10.3 11 17.8 11z"/>
+                          <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.3-4.1 5.6l6.2 5.2c-.4.4 6.6-4.8 6.6-14.8 0-1.3-.1-2.4-.4-3.5z"/>
+                        </svg>
+                        Connected with Google
+                      </div>
+                    ) : (
+                      <button type="button" className="pk-btn-ghost">Change password</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Danger Zone */}
+              <div className="pk-danger-card">
+                <div className="pk-settings-head">
+                  <div className="pk-settings-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 9v4M12 17h.01M10.3 3.86 1.82 18a2 2 0 0 0 1.73 3h16.9a2 2 0 0 0 1.73-3L13.7 3.86a2 2 0 0 0-3.4 0z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="pk-settings-title">Danger Zone</div>
+                    <div className="pk-settings-subtitle">Permanent actions — please be careful.</div>
+                  </div>
+                </div>
+                <div className="pk-danger-row">
+                  <div className="info">
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>Delete account</div>
+                    <div style={{ fontSize: 12.5, color: "var(--pk-fg-3)", marginTop: 3, lineHeight: 1.45 }}>
+                      Permanently delete your account and all associated data — deliveries, riders, feedback,
+                      and tracking links. This cannot be undone.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="pk-btn-danger"
+                    onClick={() => {
+                      if (window.confirm("Are you sure? This cannot be undone.")) {
+                        signOut().then(() => router.push("/login"));
+                      }
+                    }}
+                  >
+                    Delete account
+                  </button>
+                </div>
+              </div>
+
+            </form>
+          </main>
         </div>
-      </header>
-
-      <main className="max-w-2xl mx-auto px-6 py-8">
-        <form onSubmit={handleSave} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col gap-6">
-          <h2 className="text-base font-semibold text-gray-900">Business Profile</h2>
-
-          {/* Logo */}
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-gray-700">Logo</label>
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-xl border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden shrink-0">
-                {displayLogo ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={displayLogo} alt="Business logo" className="w-full h-full object-cover" />
-                ) : (
-                  <svg className="w-7 h-7 text-gray-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z" />
-                  </svg>
-                )}
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                >
-                  {displayLogo ? "Change logo" : "Upload logo"}
-                </button>
-                <p className="text-xs text-gray-400">PNG, JPG or WebP, max 2 MB</p>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={handleLogoChange}
-                  className="hidden"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Business name */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-gray-700">Business name</label>
-            <input
-              type="text"
-              value={businessName}
-              onChange={(e) => setBusinessName(e.target.value)}
-              placeholder="Acme Deliveries"
-              className={INPUT}
-            />
-            <p className="text-xs text-gray-400">Used in SMS and WhatsApp messages sent to customers.</p>
-          </div>
-
-          {/* Contact phone */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-gray-700">Contact phone</label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+254 700 000 000"
-              className={INPUT}
-            />
-          </div>
-
-          {/* Queue position toggle */}
-          <div className="flex items-start justify-between gap-4 pt-1">
-            <div>
-              <p className="text-sm font-medium text-gray-700">Show queue position to customers</p>
-              <p className="text-xs text-gray-400 mt-0.5">
-                If on, customers see how many stops are ahead of theirs on the tracking page.
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={showQueuePosition}
-              onClick={() => setShowQueuePosition((v) => !v)}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
-                ${showQueuePosition ? "bg-blue-600" : "bg-gray-200"}`}
-            >
-              <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform duration-200
-                  ${showQueuePosition ? "translate-x-5" : "translate-x-0"}`}
-              />
-            </button>
-          </div>
-
-          {error && (
-            <p className={`text-sm ${success ? "text-amber-600" : "text-red-600"}`}>{error}</p>
-          )}
-
-          <div className="flex items-center gap-3 pt-1">
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-6 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saving ? "Saving…" : "Save Changes"}
-            </button>
-
-            {success && (
-              <span className="flex items-center gap-1.5 text-sm text-green-600 font-medium">
-                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                </svg>
-                Settings saved
-              </span>
-            )}
-          </div>
-        </form>
-      </main>
+      </div>
     </div>
   );
 }
